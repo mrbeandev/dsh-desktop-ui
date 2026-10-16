@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#07090c">
+<title>Harness OS · Tiling — Option B</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2307090c'/%3E%3Cpath d='M16 5 27 16 16 27 5 16Z' fill='none' stroke='%235ef1d6' stroke-width='2.5'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="tiling.css">
+</head>
+<body>
+<!-- Option B: a tiling compositor concept. Sessions = workspaces, tools = tiles, agents = visible processes, context = a live reactor gauge. All data is simulated; nothing touches a real Harness runtime. -->
+<div class="wall" aria-hidden="true">
+  <div class="wall-glow"></div>
+  <div class="wall-horizon"></div>
+  <div class="wall-label"><span id="wall-no">01</span><span id="wall-name">ideas</span></div>
+</div>
+
+<header class="bar">
+  <div class="bar-l">
+    <button class="logo" data-cmd="rofi" aria-label="Open launcher"><span class="logo-mark"></span>harness</button>
+    <nav id="ws" class="ws" aria-label="Workspaces"></nav>
+  </div>
+  <div class="bar-c" id="ticker" aria-live="polite"><span class="tick-dot"></span><span id="ticker-text">idle · waiting for you</span></div>
+  <div class="bar-r">
+    <button class="ctx-mini" data-cmd="context" aria-label="Open context reactor"><span class="ctx-label">ctx</span><i><b id="ctx-fill"></b></i><span id="ctx-pct">52%</span></button>
+    <span class="bar-stat" id="agent-count">◉ 1 agent</span>
+    <span class="chip">deepseek-v3.2</span>
+    <a class="chip ghost" href="../harness-os/">option A ↗</a>
+    <span id="clock" class="clock">12:00</span>
+  </div>
+</header>
+
+<div id="tabs" class="tabs" aria-label="Tiles in this workspace"></div>
+
+<main id="stage" data-screen-label="Harness OS Tiling">
+  <div id="empty" class="empty" hidden>
+    <div class="empty-mark"></div>
+    <h1>Workspace <span id="empty-no">4</span> is empty.</h1>
+    <p>A clean slate. Open something to fill it.</p>
+    <div class="empty-actions">
+      <button data-cmd="chat"><kbd>n</kbd> new session</button>
+      <button data-cmd="terminal"><kbd>t</kbd> terminal</button>
+      <button data-cmd="rofi"><kbd>/</kbd> launcher</button>
+    </div>
+  </div>
+</main>
+
+<footer class="keys" aria-label="Keyboard shortcuts">
+  <span id="mode" class="mode">NORMAL</span>
+  <span><kbd>/</kbd> launcher</span>
+  <span><kbd>1</kbd>–<kbd>4</kbd> workspace</span>
+  <span><kbd>j</kbd><kbd>k</kbd> focus</span>
+  <span><kbd>i</kbd> type</span>
+  <span><kbd>esc</kbd> normal</span>
+  <span><kbd>n</kbd> session</span>
+  <span><kbd>t</kbd> term</span>
+  <span><kbd>c</kbd> context</span>
+  <span><kbd>f</kbd> full</span>
+  <span><kbd>[</kbd><kbd>]</kbd> resize</span>
+  <span><kbd>q</kbd> close</span>
+  <span class="keys-note">simulated · no runtime connected</span>
+</footer>
+
+<div id="rofi" class="rofi" hidden>
+  <div class="rofi-box" role="dialog" aria-modal="true" aria-label="Launcher">
+    <div class="rofi-input"><span>❯</span><input id="rofi-q" autocomplete="off" spellcheck="false" placeholder="run a tile, an action, a workspace…" aria-label="Search launcher"></div>
+    <div id="rofi-list" class="rofi-list" role="listbox"></div>
+    <div class="rofi-foot"><span>↑↓ select</span><span>↵ run</span><span>esc close</span></div>
+  </div>
+</div>
+
+<div id="notes" class="notes" aria-live="polite"></div>
+<script src="tiling.js"></script>
+</body>
+</html>

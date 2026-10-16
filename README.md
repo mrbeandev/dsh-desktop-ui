@@ -39,3 +39,15 @@ All conversations, agents, files, tools, and terminal output are mock data. The 
 ## Verification
 
 JavaScript syntax checked with `node --check`. Browser checks cover app opening/closing, file previews, theme switching, mock messages, safe text rendering, terminal help, and launcher search. Desktop and narrow-screen layout checked using browser viewport probes. This is a design prototype, not production integration.
+
+## Option B — Tiling (`designs/harness-os-tiling/`)
+
+Harness reimagined as an i3/Hyprland-style tiling compositor. Open http://127.0.0.1:4311/harness-os-tiling/.
+
+- **Sessions are workspaces, tools are tiles, agents are processes.** Four workspaces (ideas, code, tools, scratch) use an auto master/stack layout.
+- **Vim-style modal keys.** NORMAL mode: `/` launcher, `1–4` workspace, `j`/`k` focus, `f` fullscreen, `[`/`]` resize, `n` session, `t` terminal, `c` context, `q` close, `i` type. `Esc` returns to NORMAL. `Ctrl/Cmd+K` also opens the launcher.
+- **Context reactor:** a live token gauge that glows amber past 80% and animates compaction.
+- **Agent processes:** dispatch builder or reviewer and watch progress bars, the amber top-bar ticker, and the token sparkline.
+- **Streamed replies with tool-call strips**, a file tree with an inline diff, toggleable tools, and a sandboxed shell (`help`, `neofetch`, `ps`, `ctx`, `dispatch builder`, `open files`…).
+
+Same boundaries as Option A: all data is simulated, user text is rendered as plain text, and nothing executes or calls the network.

@@ -3,7 +3,7 @@
 Desktop mode for the DeepSeek Harness web GUI. The sidebar stays exactly as it is; the conversation area becomes a canvas where every session is a window, with a taskbar along the bottom.
 
 - **Toggle**: a *Desktop mode* switch sits directly above **Settings** in the sidebar. Off by default; the choice persists in this browser.
-- **Windows**: clicking a session in the sidebar opens it as a window (or focuses it if it is already open). Each window is a full, live conversation with its own composer.
+- **Windows**: clicking a session in the sidebar opens it as a window. A session can only have one window — clicking it again restores and focuses the existing one. Each window is a full, live conversation with its own composer, using a compact chat style (smaller text, buttons and pickers, tighter spacing). Untitled sessions get a short id suffix so windows stay distinguishable.
 - **Window controls**: drag the title bar to move, drag any edge or corner to resize, double-click the title to maximize/restore, and use the minimize, maximize and close buttons. Drag a window to the left/right edge to snap it to half the screen, or to the top to maximize.
 - **Taskbar**: a New session button, one button per open window (click to focus; click the focused one to minimize; a dot shows running sessions), layout buttons (Cascade, Tile, Side by side), a clock, and a Show desktop strip at the far right.
 - **Theme**: uses DSH theme tokens only, so light and dark follow the GUI.
@@ -67,10 +67,10 @@ The fixture plugin refuses any home outside `/tmp/dsh-desktop-ui-e2e.*` and seed
 
 Results on 2026-10-17 against DSH 0.2.0-rc.2, headless Chrome:
 
-- unit tests: **13/13**
-- installed from the packed tarball: **40/40** (toggle placement, open/focus from the sidebar, embedded conversations and composers, move, resize, minimize, taskbar restore/minimize, maximize/restore, edge snap, tile/columns/cascade, show desktop, close, reload persistence, malformed-state sanitising, pruning, empty state, narrow layout, toggle off and persistence, zero browser errors)
+- unit tests: **17/17**
+- installed from the packed tarball: **43/43** (toggle placement, open/focus from the sidebar, one window per session, move keeps size, embedded conversations and composers, move, resize, minimize, taskbar restore/minimize, maximize/restore, edge snap, tile/columns/cascade, show desktop, close, reload persistence, malformed-state sanitising, pruning, empty state, narrow layout, toggle off and persistence, zero browser errors)
 - removed: **5/5** (no toggle, absent from boot graph, stock conversation, no errors)
-- reinstalled: **40/40**
+- reinstalled: **43/43**
 - dark theme checked visually
 
 Not yet covered: two concurrent tabs, a live model turn streaming inside a window, coexistence with other sidebar plugins, and registry installation (the package is private and unpublished).

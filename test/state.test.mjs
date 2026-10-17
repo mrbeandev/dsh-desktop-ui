@@ -153,3 +153,57 @@ test('generated bundle matches source and registers the expected id', async () =
   assert.ok(bundle.includes(createClientPlugin.toString()), 'lib/client.js is stale; run npm run build');
   assert.ok(!/innerHTML|dangerouslySetInnerHTML|eval\(|new Function/.test(createClientPlugin.toString()));
 });
+
+test('moving by the title bar never changes the window size (regression)', () => {
+  const start = { x: 100, y: 80, w: 600, h: 400 };
+  for (const [dx, dy] of [[150, 0], [-90, 40], [0, -500], [300, 300]]) {
+    const r = P.dragRect(start, 'move', dx, dy);
+    assert.equal(r.w, 600);
+    assert.equal(r.h, 400);
+    assert.equal(r.x, 100 + dx);
+    assert.equal(r.y, Math.max(0, 80 + dy));
+  }
+});
+
+test('resizing from each edge only changes the dragged sides', () => {
+  const s = { x: 100, y: 100, w: 600, h: 400 };
+  assert.deepEqual(P.dragRect(s, 'e', 50, 30), { x: 100, y: 100, w: 650, h: 400 });
+  assert.deepEqual(P.dragRect(s, 's', 50, 30), { x: 100, y: 100, w: 600, h: 430 });
+  assert.deepEqual(P.dragRect(s, 'w', 50, 30), { x: 150, y: 100, w: 550, h: 400 });
+  assert.deepEqual(P.dragRect(s, 'n', 50, 30), { x: 100, y: 130, w: 600, h: 370 });
+  assert.deepEqual(P.dragRect(s, 'se', 20, 10), { x: 100, y: 100, w: 620, h: 410 });
+  assert.deepEqual(P.dragRect(s, 'nw', -20, -10), { x: 80, y: 90, w: 620, h: 410 });
+  // Minimum size holds, and the anchored opposite edge stays put.
+  const tiny = P.dragRect(s, 'w', 1000, 0);
+  assert.equal(tiny.x + tiny.w, 700);
+  assert.ok(tiny.w >= 360);
+  // Top edge cannot go above the canvas.
+  const up = P.dragRect(s, 'n', 0, -500);
+  assert.equal(up.y, 0);
+  assert.equal(up.y + up.h, 500);
+  // Unknown edges are ignored.
+  assert.deepEqual(P.dragRect(s, 'bogus', 50, 50), s);
+});
+
+test('a session can only ever have one window', () => {
+  let s = P.emptyState();
+  s = P.openWindow(s, 'a');
+  s = P.openWindow(s, 'b');
+  for (let i = 0; i < 5; i++) s = P.openWindow(s, 'a');
+  assert.deepEqual(s.windows.map(w => w.sessionId).sort(), ['a', 'b']);
+  assert.equal(P.focusedId(s), 'a');
+  // Reopening restores a minimized window rather than duplicating it.
+  s = P.minimizeWindow(s, 'b');
+  s = P.openWindow(s, 'b');
+  assert.equal(s.windows.filter(w => w.sessionId === 'b').length, 1);
+  assert.equal(s.windows.find(w => w.sessionId === 'b').minimized, false);
+});
+
+test('duplicate windows in stored or corrupted state collapse to one', () => {
+  const s = P.sanitize({ windows: [{ sessionId: 'a', x: 0.1 }, { sessionId: 'b' }, { sessionId: 'a', x: 0.9 }] });
+  assert.deepEqual(s.windows.map(w => w.sessionId), ['a', 'b']);
+  assert.equal(s.windows[0].x, 0.1);
+  const dup = { ...P.emptyState(), windows: [{ sessionId: 'a', z: 1 }, { sessionId: 'a', z: 2 }] };
+  assert.deepEqual(P.uniqueWindows(dup.windows).map(w => w.sessionId), ['a']);
+  assert.equal(P.openWindow(dup, 'a').windows.length, 1);
+});

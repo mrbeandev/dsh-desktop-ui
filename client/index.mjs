@@ -70,6 +70,7 @@ export function createClientPlugin(require) {
         maximized: item.maximized === true,
       });
     }
+    state.windows = uniqueWindows(state.windows);
     state.z = state.windows.reduce((m, w) => Math.max(m, w.z), 0);
     return state;
   }
@@ -90,11 +91,22 @@ export function createClientPlugin(require) {
     return { ...state, windows: state.windows.map(w => (w.sessionId === id ? { ...w, ...patch } : w)) };
   }
 
-  /** Open a session as a window, or raise/restore the existing one. */
+  /** Keep exactly one window per session id (first occurrence wins). */
+  function uniqueWindows(windows) {
+    const seen = new Set();
+    return windows.filter(w => (seen.has(w.sessionId) ? false : (seen.add(w.sessionId), true)));
+  }
+
+  /**
+   * Open a session as a window. A session can only have one window: opening
+   * it again restores and focuses the existing window instead.
+   */
   function openWindow(state, id) {
     if (!validId(id)) return state;
     const z = state.z + 1;
-    if (state.windows.some(w => w.sessionId === id)) return { ...withWindow(state, id, { minimized: false, z }), z, desktopShown: false };
+    if (state.windows.some(w => w.sessionId === id)) {
+      return { ...withWindow({ ...state, windows: uniqueWindows(state.windows) }, id, { minimized: false, z }), z, desktopShown: false };
+    }
     let windows = state.windows;
     if (windows.length >= MAX_WINDOWS) {
       // Drop the least recently focused window to keep the bound.
@@ -197,6 +209,23 @@ export function createClientPlugin(require) {
     return { ...state, desktopShown: true, windows: state.windows.map(w => (w.minimized ? w : { ...w, minimized: true, hiddenByDesktop: true })) };
   }
 
+  const RESIZE_EDGES = new Set(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']);
+
+  /**
+   * Pixel rectangle after dragging by (dx, dy). `edge` is 'move' for the title
+   * bar or a compass edge for resizing. Moving never changes the size.
+   */
+  function dragRect(start, edge, dx, dy) {
+    if (edge === 'move') return { x: start.x + dx, y: Math.max(0, start.y + dy), w: start.w, h: start.h };
+    if (!RESIZE_EDGES.has(edge)) return { ...start };
+    let { x, y, w, h } = start;
+    if (edge.includes('e')) w = Math.max(MIN_W, start.w + dx);
+    if (edge.includes('s')) h = Math.max(MIN_H, start.h + dy);
+    if (edge.includes('w')) { w = Math.max(MIN_W, start.w - dx); x = start.x + (start.w - w); }
+    if (edge.includes('n')) { h = Math.max(MIN_H, start.h - dy); y = start.y + (start.h - h); if (y < 0) { h += y; y = 0; } }
+    return { x, y, w, h };
+  }
+
   /** Remove windows whose session no longer exists in the host catalog. */
   function pruneMissing(state, knownIds) {
     const next = state.windows.filter(w => knownIds.has(w.sessionId));
@@ -237,7 +266,7 @@ export function createClientPlugin(require) {
   const CSS = `
 [data-dsh-desktop-ui]{position:relative;display:flex;flex-direction:column;width:100%;height:100%;min-width:0;min-height:0;background:var(--dsw-alias-bg-layer-1,#f4f4f5);color:var(--dsw-alias-label-primary);font-family:inherit;overflow:hidden}
 [data-dsh-desktop-ui] *{box-sizing:border-box}
-[data-dsh-desktop-ui] button{font:inherit;color:inherit}
+[data-dsh-desktop-ui] button{font-family:inherit;color:inherit}
 .dsh-dui-canvas{position:relative;flex:1;min-height:0;overflow:hidden;padding-top:var(--dsh-frame-top-clearance,0px)}
 .dsh-dui-canvas-inner{position:absolute;inset:var(--dsh-frame-top-clearance,0px) 0 0 0}
 .dsh-dui-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;text-align:center;padding:24px;color:var(--dsw-alias-label-secondary)}
@@ -250,19 +279,60 @@ export function createClientPlugin(require) {
 .dsh-dui-win[data-focused]{border-color:var(--dsw-alias-border-l3);box-shadow:var(--dsw-elevation-prominent,0 16px 48px rgba(0,0,0,.18))}
 .dsh-dui-win[data-maximized]{border-radius:0;border-width:0;box-shadow:none}
 .dsh-dui-win[hidden]{display:none}
-.dsh-dui-title{flex:none;display:flex;align-items:center;height:36px;padding-left:12px;gap:8px;border-bottom:.5px solid var(--dsw-alias-border-l2);user-select:none;touch-action:none;cursor:default;background:var(--dsw-alias-bg-base)}
+.dsh-dui-title{flex:none;display:flex;align-items:center;height:32px;padding-left:12px;gap:8px;border-bottom:.5px solid var(--dsw-alias-border-l2);user-select:none;touch-action:none;cursor:default;background:var(--dsw-alias-bg-base)}
 .dsh-dui-win:not([data-focused]) .dsh-dui-title{color:var(--dsw-alias-label-tertiary)}
-.dsh-dui-title-text{flex:1;min-width:0;font-size:13px;line-height:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dsh-dui-title-text{flex:1;min-width:0;font-size:12px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dsh-dui-dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-label-tertiary);opacity:.5}
 .dsh-dui-dot[data-running]{background:var(--dsw-alias-label-primary);opacity:1;animation:dsh-dui-pulse 1.2s ease-in-out infinite}
 @keyframes dsh-dui-pulse{50%{opacity:.35}}
 .dsh-dui-ctl{flex:none;display:flex;height:100%}
-.dsh-dui-ctl button{width:44px;height:100%;border:0;background:none;cursor:pointer;display:grid;place-items:center;color:var(--dsw-alias-label-secondary)}
+.dsh-dui-ctl button{width:40px;height:100%;border:0;background:none;cursor:pointer;display:grid;place-items:center;color:var(--dsw-alias-label-secondary)}
 .dsh-dui-ctl button:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .dsh-dui-ctl button[data-close]:hover{background:var(--dsw-alias-state-error-primary,#c42b1c);color:#fff}
 .dsh-dui-body{position:relative;flex:1;min-height:0;min-width:0;display:flex;overflow:hidden}
 .dsh-dui-body>*{flex:1;min-width:0;min-height:0}
 .dsh-dui-content{display:flex;width:100%;height:100%;min-width:0;min-height:0}
+/* Compact chat inside windows only. Everything below is scoped to a window,
+   so the stock full-width conversation is untouched. Text drops to 13px via
+   the theme's own font-size variable, so line heights and icon rows that
+   derive from it shrink together. */
+.dsh-dui-content{--dsh-content-font-size:13px;--dsh-content-font-delta:-1px;--dsh-content-font-size-secondary:12px;--dsh-content-font-delta-secondary:-1px}
+.dsh-dui-content [data-conversation-content]{--dsh-chat-content-width:calc(100% - 24px);--dsh-composer-card-max-width:calc(100% - 12px);--dsh-composer-side-clearance:6px;--dsh-composer-dock-inset:6px;--dsh-composer-text-max-height:160px}
+.dsh-dui-content [data-conversation-scroll]{scrollbar-width:thin}
+.dsh-dui-content [data-conversation-scroll]>[data-slot]{padding-top:4px}
+.dsh-dui-content [class*="_bubble"]{padding:6px 12px;border-radius:var(--dsw-radius-lg,14px)}
+.dsh-dui-content [class*="_userRow"]{gap:2px}
+.dsh-dui-content [class*="_composerStack"]{--dsh-composer-stack-gap:4px}
+.dsh-dui-content [class*="_composerSeat"]{padding-bottom:6px}
+.dsh-dui-content [class*="_card"][class*="uV2eYG"],.dsh-dui-content [data-conversation-content] [class*="_card"]:has([contenteditable]){gap:4px;padding-top:4px;border-radius:var(--dsw-radius-lg,14px)}
+.dsh-dui-content [class*="_composerHero"]{padding-bottom:12px;gap:4px}
+.dsh-dui-content [class*="_markdown_"]{font-size:13px;line-height:20px}
+.dsh-dui-content [class*="_markdown_"] :is(p,ul,ol,pre,blockquote,table){margin-block:0 6px}
+.dsh-dui-content [class*="_markdown_"] :is(h1,h2,h3,h4){font-size:14px;line-height:20px;margin-block:8px 4px}
+.dsh-dui-content [class*="_markdown_"] :is(pre,code){font-size:12px}
+.dsh-dui-content [class*="_scroll"][class*="EvIC1a"],.dsh-dui-content [data-conversation-scroll] [class*="_scroll"]:has(>[class*="_column"]){padding:8px 10px}
+.dsh-dui-content [class*="_column"]:has(>[class*="_flowItem"]){margin:0 4px}
+.dsh-dui-content [class*="_flowItem"]{--dsh-chat-flow-gap:4px}
+.dsh-dui-content [class*="_flowItem"][data-chat-flow-kind=turn-process],.dsh-dui-content [class*="_flowItem"][data-chat-group-part=response],.dsh-dui-content [class*="_flowItem"][data-turn-process-answer]{--dsh-chat-flow-gap:8px}
+.dsh-dui-content [class*="_flowItem"]{margin-top:var(--dsh-chat-flow-gap)!important}
+.dsh-dui-content [class*="_flowItem"]:first-child{margin-top:0!important}
+.dsh-dui-content button:has(>[class*="_label"]):is([class*="l_V-RG_root"]){padding-bottom:4px;font-size:13px}
+.dsh-dui-content [class*="l_V-RG_label"]{font-size:13px;line-height:20px}
+.dsh-dui-content [class*="_body"]:has(>[class*="_markdown_"]){gap:8px}
+.dsh-dui-content [class*="_actions"]{margin-top:4px}
+.dsh-dui-content [class*="_headline"]{font-size:20px;line-height:26px;gap:8px}
+.dsh-dui-content [class*="_headline"] [class*="_titleGroup"]{font-size:20px;line-height:26px}
+.dsh-dui-content [class*="_headline"] svg{width:24px;height:24px}
+.dsh-dui-content [class*="_stack"]:has(>[class*="_headline"]){gap:6px}
+/* Controls: buttons, pickers and selects use 12px inside windows. Several
+   stock pickers (workspace, agent mode) set 16px directly, so pin them here. */
+.dsh-dui-content :is(button,select,input:not([type=checkbox]):not([type=radio]),[role=button],[role=combobox],[role=menuitem],[role=tab]){font-size:12px;line-height:18px}
+.dsh-dui-content :is(button,select,[role=button],[role=combobox]) :is(span,div,label){font-size:inherit;line-height:inherit}
+.dsh-dui-content select{height:26px;padding-block:0}
+.dsh-dui-content button[class*="_workspace"],.dsh-dui-content button[class*="_seat"]{height:24px;padding-inline:6px;gap:3px}
+.dsh-dui-content [class*="_heroWorkspaceRow"]{margin-top:0;gap:0;padding-left:12px}
+.dsh-dui-content :is(button,[role=button]) svg{max-width:16px;max-height:16px}
+.dsh-dui-content [class*="_workspaceLabel"],.dsh-dui-content [class*="_seatLabel"]{font-size:12px;line-height:18px}
 .dsh-dui-note{margin:auto;padding:20px;font-size:13px;color:var(--dsw-alias-label-tertiary);text-align:center}
 .dsh-dui-edge{position:absolute;z-index:3}
 .dsh-dui-edge[data-edge=n]{top:-3px;left:8px;right:8px;height:6px;cursor:ns-resize}
@@ -275,20 +345,20 @@ export function createClientPlugin(require) {
 .dsh-dui-edge[data-edge=sw]{left:-3px;bottom:-3px;width:12px;height:12px;cursor:nesw-resize}
 .dsh-dui-snap{position:absolute;z-index:100000;border-radius:var(--dsw-radius-md,10px);background:var(--dsw-alias-interactive-bg-hover);border:1px solid var(--dsw-alias-border-l3);pointer-events:none;transition:all .12s ease}
 .dsh-dui-shield{position:fixed;inset:0;z-index:2147483646}
-.dsh-dui-taskbar{flex:none;user-select:none;display:flex;align-items:center;gap:4px;height:48px;padding:0 0 0 8px;border-top:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-base);position:relative;z-index:2}
+.dsh-dui-taskbar{flex:none;user-select:none;display:flex;align-items:center;gap:4px;height:42px;padding:0 0 0 6px;border-top:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-base);position:relative;z-index:2}
 .dsh-dui-tasks{flex:1;min-width:0;display:flex;align-items:center;gap:4px;overflow-x:auto;scrollbar-width:none;padding:0 4px}
 .dsh-dui-tasks::-webkit-scrollbar{display:none}
-.dsh-dui-tb{position:relative;flex:none;display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 10px;border:0;border-radius:var(--dsw-radius-sm,8px);background:none;cursor:pointer;font-size:13px;color:var(--dsw-alias-label-secondary)}
+.dsh-dui-tb{position:relative;flex:none;display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 10px;border:0;border-radius:var(--dsw-radius-sm,8px);background:none;cursor:pointer;font-size:12px;line-height:16px;color:var(--dsw-alias-label-secondary)}
 .dsh-dui-tb:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
-.dsh-dui-tb[data-icon]{width:38px;padding:0;justify-content:center}
-.dsh-dui-task{max-width:220px;min-width:120px}
+.dsh-dui-tb[data-icon]{width:34px;padding:0;justify-content:center}
+.dsh-dui-task{max-width:200px;min-width:110px}
 .dsh-dui-task span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dsh-dui-task[data-focused]{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .dsh-dui-task::after{content:"";position:absolute;left:50%;bottom:3px;width:6px;height:3px;border-radius:2px;transform:translateX(-50%);background:var(--dsw-alias-label-tertiary);transition:width .15s}
 .dsh-dui-task[data-focused]::after{width:16px;background:var(--dsw-alias-label-primary)}
 .dsh-dui-sep{flex:none;width:1px;height:22px;background:var(--dsw-alias-border-l2);margin:0 4px}
 .dsh-dui-tray{flex:none;display:flex;align-items:center;gap:2px}
-.dsh-dui-clock{flex:none;padding:0 10px;font-size:12px;line-height:16px;text-align:right;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}
+.dsh-dui-clock{flex:none;padding:0 10px;font-size:11px;line-height:14px;text-align:right;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}
 .dsh-dui-peek{flex:none;width:8px;height:100%;border:0;border-left:.5px solid var(--dsw-alias-border-l2);background:none;cursor:pointer}
 .dsh-dui-peek:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dsh-dui-toggle{flex:none;display:flex;align-items:center;gap:8px;width:calc(100% + 4px);height:42px;margin:0 -2px;padding:0 10px 0 8px;border:none;border-radius:var(--dsw-radius-md,10px);background:none;color:var(--dsw-alias-label-primary);font:inherit;font-size:14px;line-height:22px;cursor:pointer;text-align:left}
@@ -447,11 +517,16 @@ export function createClientPlugin(require) {
 
     /* ---------- components ---------- */
 
-    /** Match the sidebar: durable title, else New session / Untitled. */
-    function sessionTitle(summary) {
+    /**
+     * Window/taskbar label. Uses the durable title; untitled sessions get a
+     * short id suffix so several untitled windows stay distinguishable.
+     */
+    function sessionTitle(summary, id) {
       const title = typeof summary?.title === 'string' ? summary.title.trim() : '';
       if (title) return title;
-      return summary?.blank === true ? 'New session' : 'Untitled';
+      if (summary?.blank === true) return 'New session';
+      const short = String(id ?? summary?.id ?? '').replace(/^session-/, '').slice(0, 6);
+      return short ? `Untitled · ${short}` : 'Untitled';
     }
 
     function useSessionReference(sessionId) {
@@ -490,7 +565,7 @@ export function createClientPlugin(require) {
 
     function Window({ win, focused, narrow, size, canvasRef, onSnapPreview, renderSlot, SessionProvider, useSessions, useSessionStatus }) {
       const { sessionId } = win;
-      const title = useSessions(state => sessionTitle(state.byId[sessionId]));
+      const title = useSessions(state => sessionTitle(state.byId[sessionId], sessionId));
       const statusRunning = useSessionStatus(map => map.get(sessionId)?.running);
       const summaryRunning = useSessions(state => state.byId[sessionId]?.running === true);
       const running = statusRunning ?? summaryRunning;
@@ -507,7 +582,7 @@ export function createClientPlugin(require) {
       const width = clamp(px.w, Math.min(160, size.width), size.width);
       const height = clamp(px.h, Math.min(120, size.height), size.height);
       const left = clamp(px.x, -(width - 120), Math.max(0, size.width - 120));
-      const top = clamp(px.y, 0, Math.max(0, size.height - 36));
+      const top = clamp(px.y, 0, Math.max(0, size.height - 32));
       const style = maximized
         ? { left: 0, top: 0, width: '100%', height: '100%', zIndex: win.z + 1 }
         : { left, top, width, height, zIndex: win.z + 1 };
@@ -540,13 +615,7 @@ export function createClientPlugin(require) {
             engaged = true;
             setDragging(true);
           }
-          let { x, y, w, h: hh } = start;
-          if (edge === 'move') { x += dx; y = Math.max(0, y + dy); }
-          if (edge.includes('e')) w = Math.max(MIN_W, start.w + dx);
-          if (edge.includes('s')) hh = Math.max(MIN_H, start.h + dy);
-          if (edge.includes('w')) { const nw = Math.max(MIN_W, start.w - dx); x = start.x + (start.w - nw); w = nw; }
-          if (edge.includes('n') && edge !== 'move') { const nh = Math.max(MIN_H, start.h - dy); y = Math.max(0, start.y + (start.h - nh)); hh = nh; }
-          current = { x, y, w, h: hh };
+          current = dragRect(start, edge, dx, dy);
           setLive(current);
           if (edge === 'move') {
             const pxp = ev.clientX - canvas.left, pyp = ev.clientY - canvas.top;
@@ -613,7 +682,7 @@ export function createClientPlugin(require) {
     }
 
     function TaskButton({ win, focused, useSessions, useSessionStatus }) {
-      const title = useSessions(state => sessionTitle(state.byId[win.sessionId]));
+      const title = useSessions(state => sessionTitle(state.byId[win.sessionId], win.sessionId));
       const running = useSessionStatus(map => map.get(win.sessionId)?.running) ?? false;
       return h('button', {
         type: 'button',
@@ -629,7 +698,9 @@ export function createClientPlugin(require) {
     }
 
     function Desktop({ renderSlot, SessionProvider, useSessions, useSessionStatus }) {
-      const windows = useDesktop(s => s.windows);
+      // Defensive: render at most one window per session, whatever the state says.
+      const allWindows = useDesktop(s => s.windows);
+      const windows = React.useMemo(() => uniqueWindows(allWindows), [allWindows]);
       const focus = useDesktop(focusedId);
       const canvasRef = useRef(null);
       const [size, setSize] = useState({ width: 1000, height: 700 });
@@ -729,8 +800,8 @@ export function createClientPlugin(require) {
     inject,
     apply,
     // Pure helpers for tests.
-    sanitize, serialize, openWindow, closeWindow, focusWindow, minimizeWindow, toggleMaximize,
-    setGeometry, snapWindow, snapGeometry, arrange, arrangeGeometry, toggleShowDesktop, pruneMissing, focusedId, emptyState,
+    sanitize, serialize, uniqueWindows, openWindow, closeWindow, focusWindow, minimizeWindow, toggleMaximize,
+    setGeometry, snapWindow, snapGeometry, arrange, dragRect, arrangeGeometry, toggleShowDesktop, pruneMissing, focusedId, emptyState,
     constants: { PANEL, WINDOW_SLOT, TOGGLE_ID, STORAGE_KEY, MAX_WINDOWS },
   };
 }

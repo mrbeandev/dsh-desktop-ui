@@ -107,6 +107,13 @@ try {
     const opened = await evaluate(`document.querySelectorAll('.dsh-dui-win').length`);
     check('sidebar clicks open every listed session as a window', opened >= rows.length && await evaluate(`!!document.querySelector('[data-dsh-desktop-ui]')`), { opened, rows: rows.length });
     check('sidebar click on an open session focuses its window', (await focused()) === rows[rows.length - 1].slice('session:'.length));
+    // Clicking every session again (and twice) must never create a second window.
+    const rowsNow = await evaluate(`[...document.querySelectorAll('[role=treeitem]')].map(e => e.getAttribute('data-row-key')).filter(k => k?.startsWith('session:'))`);
+    const winsBefore = await evaluate(`document.querySelectorAll('.dsh-dui-win').length`);
+    for (const key of rowsNow) { await click(`[data-row-key="${key}"] span[class*="_title"]`); await click(`[data-row-key="${key}"] span[class*="_title"]`); }
+    await delay(400);
+    const ids = await evaluate(`[...document.querySelectorAll('.dsh-dui-win')].map(n => n.getAttribute('data-session-id'))`);
+    check('a session never opens in more than one window', ids.length === new Set(ids).size && ids.length === winsBefore, { ids, winsBefore });
     check('one taskbar entry per window', await evaluate(`document.querySelectorAll('.dsh-dui-task').length === document.querySelectorAll('.dsh-dui-win').length`));
     check('seeded transcript renders inside a window', await wait(`[...document.querySelectorAll('.dsh-dui-win .dsh-dui-body')].some(b => /checklist|flaky|README/.test(b.innerText))`));
     check('embedded conversation renders in each window', await wait(`[...document.querySelectorAll('.dsh-dui-win')].every(w => w.querySelector('[data-conversation-content]'))`));
@@ -119,6 +126,11 @@ try {
     await drag(t0.x, t0.y, t0.x + 160, t0.y + 90);
     const b1 = await center(sel);
     check('title bar drag moves window', Math.round(b1.left - b0.left) === 160 && Math.round(b1.top - b0.top) === 90, [b1.left - b0.left, b1.top - b0.top]);
+    check('title bar drag keeps window size', Math.round(b1.w) === Math.round(b0.w) && Math.round(b1.h) === Math.round(b0.h), [b0.w, b1.w, b0.h, b1.h]);
+    const t1 = await center(`${sel} .dsh-dui-title-text`);
+    await drag(t1.x, t1.y, t1.x - 120, t1.y + 30);
+    const b1b = await center(sel);
+    check('dragging left keeps window size', Math.round(b1b.w) === Math.round(b0.w) && Math.round(b1b.h) === Math.round(b0.h), [b0.w, b1b.w]);
     const nw = await center(`${sel} [data-edge=nw]`);
     await drag(nw.x, nw.y, nw.x - 120, nw.y - 60);
     const b2 = await center(sel);

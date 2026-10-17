@@ -1,9 +1,9 @@
 # Release checklist
 
-## Current candidate: 0.1.0 (first release, not yet published)
+## Current release: 0.1.0 (published to npm 2026-10-17)
 
-**Status: experimental.** Publication is manual; no automatic npm publishing
-workflow is configured.
+**Status: experimental.** Releases are npm-only and published manually by the
+owner. There are no GitHub releases, tags or CI workflows.
 
 Local tests on 2026-10-17 used DSH 0.2.0-rc.2, Node 24 and real headless Google
 Chrome over CDP in a disposable `DSH_HOME` under `/tmp`. The primary profile was
@@ -36,20 +36,18 @@ not modified. No model calls or real credentials were used.
 
 - Live model turn streaming inside a window (needs a provider).
 - Two tabs at once; coexistence with other sidebar plugins.
-- Installation from the npm registry (do this right after publishing).
+- Installation from the npm registry into a fresh profile (pending).
 
 ## Publishing (owner only)
 
-1. `git status` is clean and `main` is pushed; CI is green.
+1. `git status` is clean and `main` is pushed.
 2. `npm run check`, then `npm publish --dry-run --json` — inspect the file list,
    size, shasum and integrity.
 3. `npm login` (if `npm whoami` fails), then `npm publish`. `publishConfig.access`
    is already `public`.
-4. Tag and push: `git tag v0.1.0 && git push origin v0.1.0`, and create a GitHub
-   release from the tag.
-5. Install from the registry into a fresh disposable profile
-   (`dsh plugin --profile web add dsh-desktop-ui@0.1.0`), restart, and rerun the
-   browser test. Record the result here.
+4. Install from the registry into a fresh disposable profile
+   (`dsh plugin --profile web add dsh-desktop-ui@<version>`), restart, and rerun
+   the browser test. Record the result here.
 
 `prepack` rebuilds and tests; `prepublishOnly` runs `npm run check`. These are a
 package gate, not a complete runtime release gate.

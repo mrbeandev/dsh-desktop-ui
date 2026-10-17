@@ -6,7 +6,6 @@ movable, resizable window — with a taskbar along the bottom.
 
 [![npm version](https://img.shields.io/npm/v/dsh-desktop-ui.svg)](https://www.npmjs.com/package/dsh-desktop-ui)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
-[![CI](https://github.com/mrbeandev/dsh-desktop-ui/actions/workflows/check.yml/badge.svg)](https://github.com/mrbeandev/dsh-desktop-ui/actions/workflows/check.yml)
 
 - **Source code:** [github.com/mrbeandev/dsh-desktop-ui](https://github.com/mrbeandev/dsh-desktop-ui)
 - **npm package:** [npmjs.com/package/dsh-desktop-ui](https://www.npmjs.com/package/dsh-desktop-ui)
@@ -96,7 +95,7 @@ npm run check     # build lib/client.js, run unit tests, npm pack --dry-run
 npm pack
 ```
 
-- Editable client source is `client/index.mjs`. `scripts/build.mjs` writes `lib/client.js`, a lazy module that uses the GUI's own React (React is not bundled). CI fails if the committed `lib/client.js` is stale.
+- Editable client source is `client/index.mjs`. `scripts/build.mjs` writes `lib/client.js`, a lazy module that uses the GUI's own React (React is not bundled). Run `npm run build` and commit `lib/client.js` after editing the source; a unit test fails if it is stale.
 - `index.mjs` is an intentional no-op host entry; `cordis.patch.yml` registers the package.
 - Client inject list: `dsh-api-session-controller`, `dsh-client-ui-layout`, `dsh-client-ui-session`, `dsh-client-ui-sidebar`, `dsh-client-ui-conversation`, `dsh-client-ui-chat`, `dsh-client-ui-workspace`.
 - `test/state.test.mjs` covers the window manager (open/focus/minimize/maximize/close, one window per session, move never resizes, snapping, layouts, show desktop, pruning, state sanitising), runtime identities, and bundle freshness.

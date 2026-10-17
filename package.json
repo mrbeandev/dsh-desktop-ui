@@ -1,0 +1,40 @@
+{
+  "name": "dsh-desktop-ui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desktop mode for the DeepSeek Harness web GUI: open sessions as movable windows with a taskbar.",
+  "type": "module",
+  "main": "index.mjs",
+  "exports": { ".": "./index.mjs", "./client": "./lib/client.js", "./package.json": "./package.json" },
+  "files": ["index.mjs", "lib/client.js", "cordis.patch.yml", "README.md", "LICENSE"],
+  "engines": { "node": ">=22.19.0" },
+  "license": "MIT",
+  "author": "mrbeandev and contributors",
+  "repository": { "type": "git", "url": "git+https://github.com/mrbeandev/dsh-desktop-ui.git" },
+  "keywords": ["dsh", "deepseek-harness", "plugin", "desktop", "windows", "taskbar"],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test test/*.test.mjs",
+    "test:e2e": "node scripts/e2e-gui.mjs",
+    "check": "npm run build && npm test && npm pack --dry-run",
+    "prepack": "npm run build && npm test"
+  },
+  "peerDependencies": { "@deepseek-ai/dsh": ">=0.2.0-rc.2 <0.3.0" },
+  "peerDependenciesMeta": { "@deepseek-ai/dsh": { "optional": true } },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-chat",
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ]
+    },
+    "engines": { "dsh": ">=0.2.0-rc.2 <0.3.0" }
+  }
+}

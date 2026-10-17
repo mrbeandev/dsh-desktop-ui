@@ -1,6 +1,10 @@
 .DS_Store
 node_modules/
+lib/
+*.tgz
+.cache/
 .env
 .env.*
 *.log
 .playwright-mcp/
+e2e-shots/

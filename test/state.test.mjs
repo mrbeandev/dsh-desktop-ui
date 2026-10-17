@@ -207,3 +207,155 @@ test('duplicate windows in stored or corrupted state collapse to one', () => {
   assert.deepEqual(P.uniqueWindows(dup.windows).map(w => w.sessionId), ['a']);
   assert.equal(P.openWindow(dup, 'a').windows.length, 1);
 });
+
+test('Desktop mode toggle sorts above other sidebar footer actions', async () => {
+  // dsh-all-usage registers order 10; stock entries default to 0.
+  assert.ok(P.constants.TOGGLE_ORDER < 0);
+  const src = createClientPlugin.toString();
+  assert.match(src, /order: TOGGLE_ORDER/);
+  assert.match(src, /_footerActions"\]:has\(\[data-dsh-desktop-ui-toggle\]\)\{flex-direction:column/);
+});
+
+test('zoom is persisted, validated and cycles through fixed steps', () => {
+  const { ZOOM_STEPS, DEFAULT_ZOOM } = P.constants;
+  assert.equal(P.emptyState().zoom, DEFAULT_ZOOM);
+  assert.equal(P.sanitize({ zoom: 0.8 }).zoom, 0.8);
+  assert.equal(P.sanitize({ zoom: 7 }).zoom, DEFAULT_ZOOM);
+  assert.equal(P.sanitize({ zoom: '0.8' }).zoom, DEFAULT_ZOOM);
+  let s = P.emptyState();
+  const seen = new Set();
+  for (let i = 0; i < ZOOM_STEPS.length; i++) { seen.add(s.zoom); s = P.cycleZoom(s, 1); }
+  assert.equal(seen.size, ZOOM_STEPS.length);
+  assert.equal(s.zoom, DEFAULT_ZOOM);
+  assert.equal(P.cycleZoom(P.cycleZoom(s, 1), -1).zoom, DEFAULT_ZOOM);
+  assert.equal(P.sanitize(JSON.parse(P.serialize({ ...s, zoom: 0.7 }))).zoom, 0.7);
+});
+
+test('parseLayout rejects malformed, oversized and empty documents', () => {
+  assert.equal(P.parseLayout(''), undefined);
+  assert.equal(P.parseLayout('{nope'), undefined);
+  assert.equal(P.parseLayout(42), undefined);
+  assert.equal(P.parseLayout('x'.repeat(70 * 1024)), undefined);
+  assert.deepEqual(P.parseLayout('{"enabled":true,"windows":[{"sessionId":"a"}]}').windows.map(w => w.sessionId), ['a']);
+});
+
+test('findEntryNamespace locates this plugin only', () => {
+  const ns = names => names.map(n => ({ ns: n }));
+  assert.equal(P.findEntryNamespace(ns(['ui-conversation', 'include:dsh-desktop-ui'])), 'include:dsh-desktop-ui');
+  assert.equal(P.findEntryNamespace(ns(['dsh-desktop-ui'])), 'dsh-desktop-ui');
+  assert.equal(P.findEntryNamespace(ns(['web:dsh-desktop-ui'])), 'web:dsh-desktop-ui');
+  assert.equal(P.findEntryNamespace(ns(['dsh-desktop-ui-other', 'other'])), undefined);
+  assert.equal(P.findEntryNamespace(null), undefined);
+});
+
+function fakeForm(initial) {
+  let snap = { status: 'ready', writable: true, mode: 'host', revision: 1, value: { layout: initial } };
+  const listeners = new Set();
+  const writes = [];
+  return {
+    writes,
+    getSnapshot: () => snap,
+    subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+    async set(field, value) { writes.push([field, value]); snap = { ...snap, revision: snap.revision + 1, value: { ...snap.value, [field]: value } }; for (const fn of listeners) fn(); return true; },
+  };
+}
+const memoryStorage = () => { const m = new Map(); return { getItem: k => m.get(k) ?? null, setItem: (k, v) => m.set(k, String(v)) }; };
+
+test('host layout wins over the browser copy after a restart', () => {
+  const browser = memoryStorage();
+  browser.setItem(P.constants.STORAGE_KEY, JSON.stringify({ enabled: false, windows: [{ sessionId: 'stale' }] }));
+  const store = P.createStore(browser);
+  const host = JSON.stringify({ enabled: true, zoom: 0.8, windows: [{ sessionId: 'a', x: 0.1, y: 0.2, w: 0.5, h: 0.6, z: 3 }, { sessionId: 'b', minimized: true }] });
+  const sync = P.createHostSync(null, store);
+  const form = fakeForm(host);
+  sync.attach(form);
+  const s = store.get();
+  assert.equal(s.enabled, true);
+  assert.equal(s.zoom, 0.8);
+  assert.deepEqual(s.windows.map(w => [w.sessionId, w.minimized]), [['a', false], ['b', true]]);
+  assert.equal(s.windows[0].x, 0.1);
+  assert.equal(form.writes.length, 0, 'adopting the Host copy must not echo a write');
+  assert.equal(JSON.parse(browser.getItem(P.constants.STORAGE_KEY)).windows[0].sessionId, 'a');
+  sync.dispose();
+});
+
+test('an empty Host is seeded from the browser, then later changes are written (debounced)', async () => {
+  const browser = memoryStorage();
+  browser.setItem(P.constants.STORAGE_KEY, JSON.stringify({ enabled: true, windows: [{ sessionId: 'a' }] }));
+  let sync;
+  const store = P.createStore(browser, text => sync?.persist(text));
+  sync = P.createHostSync(null, store, { delay: 10 });
+  const form = fakeForm('');
+  sync.attach(form);
+  assert.equal(form.writes.length, 1);
+  assert.equal(JSON.parse(form.writes[0][1]).windows[0].sessionId, 'a');
+  await new Promise(r => setTimeout(r, 0));
+  store.set(P.openWindow(store.get(), 'b'));
+  store.set(P.openWindow(store.get(), 'c'));
+  assert.equal(form.writes.length, 1, 'debounced');
+  await new Promise(r => setTimeout(r, 30));
+  assert.equal(form.writes.length, 2);
+  assert.deepEqual(JSON.parse(form.writes[1][1]).windows.map(w => w.sessionId), ['a', 'b', 'c']);
+  await new Promise(r => setTimeout(r, 0));
+  store.set(P.minimizeWindow(store.get(), 'a'));
+  sync.flush();
+  assert.equal(form.writes.length, 3, 'flush writes immediately (page hide)');
+  sync.dispose();
+});
+
+test('a malformed Host value is ignored and the browser copy is kept', () => {
+  const browser = memoryStorage();
+  browser.setItem(P.constants.STORAGE_KEY, JSON.stringify({ enabled: true, windows: [{ sessionId: 'keep' }] }));
+  const store = P.createStore(browser);
+  const sync = P.createHostSync(null, store);
+  sync.attach(fakeForm('{"windows": not json'));
+  assert.deepEqual(store.get().windows.map(w => w.sessionId), ['keep']);
+  sync.dispose();
+});
+
+test('host entry declares a volatile layout field', async () => {
+  const { createConfig } = await import('../index.mjs');
+  const calls = [];
+  const chain = new Proxy(function () {}, { get: (_t, k) => (...a) => { calls.push([k, ...a]); return chain; }, apply: () => chain });
+  createConfig({ object: fields => { calls.push(['object', Object.keys(fields)]); return chain; }, string: () => chain });
+  assert.deepEqual(calls[calls.length - 1], ['object', ['layout']]);
+  assert.ok(calls.some(c => c[0] === 'volatile'));
+});
+
+test('a change made before the Host answers is not overwritten by a late Host copy', () => {
+  const browser = memoryStorage();
+  let sync;
+  const store = P.createStore(browser, text => sync?.persist(text));
+  sync = P.createHostSync(null, store, { delay: 10_000 });
+  store.set(P.openWindow(store.get(), 'mine'));
+  const form = fakeForm(JSON.stringify({ enabled: true, windows: [{ sessionId: 'old-a' }, { sessionId: 'old-b' }] }));
+  sync.attach(form);
+  assert.deepEqual(store.get().windows.map(w => w.sessionId), ['mine']);
+  assert.equal(form.writes.length, 1);
+  assert.deepEqual(JSON.parse(form.writes[0][1]).windows.map(w => w.sessionId), ['mine']);
+  sync.dispose();
+});
+
+test('host writes are serialized so an older layout can never land last', async () => {
+  let resolveFirst;
+  const writes = [];
+  const form = {
+    getSnapshot: () => ({ status: 'ready', writable: true, mode: 'host', revision: 1, value: { layout: '' } }),
+    subscribe: () => () => {},
+    set(field, value) { writes.push(value); return writes.length === 1 ? new Promise(r => { resolveFirst = () => r(true); }) : Promise.resolve(true); },
+  };
+  let sync;
+  const store = P.createStore(memoryStorage(), text => sync?.persist(text));
+  sync = P.createHostSync(null, store, { delay: 0 });
+  sync.attach(form);
+  store.set(P.openWindow(store.get(), 'a')); sync.flush();
+  store.set(P.openWindow(store.get(), 'b')); sync.flush();
+  store.set(P.openWindow(store.get(), 'c')); sync.flush();
+  assert.equal(writes.length, 1, 'second write waits for the first');
+  resolveFirst();
+  await new Promise(r => setTimeout(r, 0));
+  await new Promise(r => setTimeout(r, 0));
+  assert.equal(writes.length, 2, 'only the latest queued layout is written next');
+  assert.deepEqual(JSON.parse(writes[1]).windows.map(w => w.sessionId), ['a', 'b', 'c']);
+  sync.dispose();
+});

@@ -46,18 +46,23 @@ browser-local window layout remains in `localStorage`.
 | Feature | What it does |
 |---|---|
 | **Desktop mode switch** | Sits directly above Settings. Off by default; the choice persists in this browser. Turning it off returns to the normal conversation on the focused window's session. |
-| **Sessions as windows** | Clicking a session in the sidebar opens it as a window. A session can only have one window — clicking it again restores and focuses the existing one. Every window is a full, live conversation with its own composer. |
+| **Sessions as windows** | Clicking a session in the sidebar opens it as a window. A session can only have one window — clicking it again restores and focuses the existing one. Every window shows the **same conversation UI as the main chat** — header, view tabs, transcript, composer, and anything other plugins add (for example `dsh-rewind-plugin`'s rewind button under your messages). |
 | **Window controls** | Drag the title bar to move; drag any edge or corner to resize; double-click the title to maximize/restore; minimize, maximize and close buttons. |
 | **Snapping** | Drag a window to the left or right edge to fill that half, or to the top to maximize. |
 | **Taskbar** | New session button, one button per window (click to focus, click the focused one to minimize, a dot shows running sessions), Cascade / Tile / Side-by-side layouts, a clock, and a Show desktop strip at the far right. |
-| **Compact chat** | Inside windows the chat uses smaller text, buttons and pickers, and tighter spacing. The normal full-width conversation is untouched. |
+| **Window text size** | Window contents are the stock UI scaled down uniformly (default 85%), so every element — including ones added by other plugins — shrinks together. Click the percentage in the taskbar to make it larger, right-click to make it smaller (70–100%). The normal full-width conversation is untouched. |
+| **Restored after restart** | Desktop mode, the open windows, their positions and sizes, minimized/maximized state, stacking order and text size are saved to your DSH profile config and restored after you stop and restart DSH — even in a different browser. Windows you closed stay closed. |
+| **Plays well with sidebar plugins** | The Desktop mode switch is always the top entry above Settings; other footer buttons (for example `dsh-all-usage`) stack underneath it instead of being pushed sideways. |
 | **Light and dark** | Uses DSH's own theme tokens only, so it follows the GUI theme automatically. |
 | **Narrow screens** | Below 720px the focused window fills the canvas and you switch through the taskbar. |
 
-Closing a window never deletes or archives a session. Nothing is written to the
-Host: the window layout lives in browser `localStorage` under
-`dsh-desktop-ui.state.v1`. The plugin makes no network requests and stores no
-credentials or session contents.
+Closing a window never deletes or archives a session. The layout is stored as one
+small JSON value in this plugin's own config entry (`dsh-desktop-ui` → `layout` in
+your profile's `cordis.patch.yml`), written through DSH's settings service, with a
+browser `localStorage` copy (`dsh-desktop-ui.state.v1`) for instant reloads. It
+contains session ids, geometry and flags only — never conversation content,
+credentials or prompts. The plugin makes no network requests of its own. To reset
+the desktop, remove the `layout` line or switch Desktop mode off and close the windows.
 
 ![Desktop mode in the dark theme](https://raw.githubusercontent.com/mrbeandev/dsh-desktop-ui/main/assets/desktop-mode-dark.png)
 
@@ -70,8 +75,10 @@ This is an **internal integration**, not a stable public DSH API. It plugs into:
 | Seam | Use |
 |---|---|
 | `main` keyed slot, key `dsh-desktop-ui` | the desktop canvas and taskbar, selected with `ctx.layout.selectPanel` |
-| `dsh-desktop-ui.window` (session-scoped child slot) | one window body per session, rendering the `conversation.content` factory with `variant: 'embedded'` — the same seam `ui-subagent` uses for sidebar chats |
-| `sidebar.footer.action` | the Desktop mode switch |
+| `main.conversation` entry | each window renders the stock conversation entry's own component with its own render rights, captured when DSH first renders it, so every plugin contribution appears inside windows too (falls back to the `conversation.content` factory if unavailable) |
+| `dsh-desktop-ui.window` (session-scoped child slot) | one window body per session, under that session's scope |
+| `sidebar.footer.action` (order −100) | the Desktop mode switch, sorted first; the footer row is stacked vertically while it is present |
+| `configForms` (`dsh-desktop-ui` namespace) | Host-backed `layout` field (volatile plugin config) for restart-proof restore |
 | `ctx.sessions.retain(id, { source: 'desktopWindow' })` | each window owns an independent session reference, released on close |
 | `ctx.uiWorkspace.openSession` / `startSession` | keeps the sidebar selection in sync and creates new sessions |
 
@@ -84,7 +91,8 @@ Known limitations:
 - Later DSH versions may change these internal seams; the plugin may need an update.
 - The right sidebar (files, terminal, browser) still belongs to the main session, not to individual windows.
 - Window positions are stored per browser, not per account or device.
-- Compact styling targets DSH 0.2.0-rc.2 class names; a future DSH restyle can make some of it fall back to stock sizes (harmless, just less compact).
+- Window scaling uses CSS `zoom` (Chrome/Edge/Safari and Firefox 126+).
+- Reusing the stock conversation entry wraps it at runtime (the same technique `dsh-workspace-sorter` uses for the sidebar). It is restored when the plugin unloads.
 - The UI strings are English only.
 - Not yet tested: two tabs at once, a live model turn streaming inside a window, and coexistence with other sidebar plugins.
 
@@ -96,9 +104,10 @@ npm pack
 ```
 
 - Editable client source is `client/index.mjs`. `scripts/build.mjs` writes `lib/client.js`, a lazy module that uses the GUI's own React (React is not bundled). Run `npm run build` and commit `lib/client.js` after editing the source; a unit test fails if it is stale.
-- `index.mjs` is an intentional no-op host entry; `cordis.patch.yml` registers the package.
-- Client inject list: `dsh-api-session-controller`, `dsh-client-ui-layout`, `dsh-client-ui-session`, `dsh-client-ui-sidebar`, `dsh-client-ui-conversation`, `dsh-client-ui-chat`, `dsh-client-ui-workspace`.
-- `test/state.test.mjs` covers the window manager (open/focus/minimize/maximize/close, one window per session, move never resizes, snapping, layouts, show desktop, pruning, state sanitising), runtime identities, and bundle freshness.
+- `cordis.patch.yml` registers the package.
+- `index.mjs` declares the volatile `layout` Config field using the running harness's own schemastery; it has no other host behaviour.
+- Client inject list: `dsh-api-session-controller`, `dsh-client-ui-layout`, `dsh-client-ui-session`, `dsh-client-ui-sidebar`, `dsh-client-ui-conversation`, `dsh-client-ui-chat`, `dsh-client-ui-workspace`, `dsh-client-ui-settings`.
+- `test/state.test.mjs` covers the window manager (open/focus/minimize/maximize/close, one window per session, move never resizes, snapping, layouts, show desktop, pruning, state sanitising, text size), Host persistence (restore, seeding, debounced and serialized writes, malformed values, early local changes), footer ordering, runtime identities, and bundle freshness.
 - `scripts/e2e-gui.mjs` is a dependency-free headless Chrome/CDP test against a real, isolated DSH instance. See [LOCAL-SETUP.md](./LOCAL-SETUP.md).
 
 ## Design concepts

@@ -1,6 +1,39 @@
 # Release checklist
 
-## Current release: 0.1.0 (published to npm 2026-10-17)
+## Current candidate: 0.1.2 (not yet published)
+
+Local tests on 2026-10-17 used DSH 0.2.0-rc.2, Node 24 and real headless Google
+Chrome over CDP in a disposable `DSH_HOME` under `/tmp`, with `dsh-all-usage@1.2.0`
+and `dsh-rewind-plugin@0.15.0-beta.1` installed alongside. The primary profile was
+not modified. No model calls or real credentials were used.
+
+| Check | Result |
+|---|---|
+| Unit tests (`npm test`) | 27/27 |
+| Packed tarball installed in isolated DSH, GUI test | 50/50, twice in a row |
+| Removed + restarted, GUI test (`DSH_E2E_ABSENT=1`) | 5/5 |
+| DSH restarted, brand-new browser profile | same windows, positions, minimized state and text size restored from the Host config |
+
+### Changes in 0.1.2
+
+- **Full stock UI in windows.** Windows render the stock conversation entry with
+  its own render rights, so header, tabs and every plugin contribution appear,
+  e.g. `dsh-rewind-plugin`'s rewind button, which was missing before.
+- **Uniform scaling instead of per-element CSS.** One CSS `zoom` on the window
+  body (default 85%, 70–100% from the taskbar) replaces the old list of
+  compact-size overrides, so future plugin UI scales automatically.
+- **Restart-proof layout.** The layout is saved to a volatile `layout` field in
+  this plugin's config through DSH's settings service; the Host copy wins on
+  load, local edits made before it answers win over a late Host copy, writes are
+  debounced and serialized, and pending writes flush on page hide.
+- **Footer coexistence.** The Desktop mode switch sorts first (order −100) and
+  the footer action row stacks vertically, so `dsh-all-usage`'s button no longer
+  gets pushed sideways.
+- Fixed: restored windows mounting before the session list loaded showed
+  "unknown session"; DSH's boot-time reselection reopened a window the user had
+  closed; the reading column kept a 680px minimum inside narrow windows.
+
+## Previous release: 0.1.0 (published to npm 2026-10-17)
 
 **Status: experimental.** Releases are npm-only and published manually by the
 owner. There are no GitHub releases, tags or CI workflows.

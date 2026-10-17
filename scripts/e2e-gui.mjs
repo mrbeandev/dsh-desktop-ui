@@ -86,12 +86,27 @@ try {
     check('removed plugin is absent from boot graph', await evaluate(`!window.__DSH_BOOT__.entries.some(e => e.id === 'dsh-desktop-ui')`));
     check('native conversation renders', await wait(`!!document.querySelector('[data-conversation-content]') || !!document.querySelector('[data-phase]')`));
   } else {
-    await evaluate(`localStorage.removeItem('dsh-desktop-ui.state.v1')`);
+    // Start from a clean slate: clear the browser copy and the Host copy.
+    // Reset through the UI so the Host copy is reset too: close every window,
+    // set the default text size, then switch Desktop mode off.
+    await wait(`!!document.querySelector('[data-dsh-desktop-ui-toggle]')`, 50);
+    await delay(3000);
+    if (await evaluate(`!!document.querySelector('[data-dsh-desktop-ui]')`)) {
+      for (let pass = 0; pass < 3; pass++) {
+        const open = await evaluate(`[...document.querySelectorAll('.dsh-dui-win')].map(n => n.getAttribute('data-session-id'))`);
+        if (!open.length) break;
+        for (const id of open) await click(`.dsh-dui-win[data-session-id="${id}"] button[aria-label^="Close"]`);
+      }
+      for (let i = 0; i < 8 && (await evaluate(`document.querySelector('.dsh-dui-scale')?.textContent`)) !== '85%'; i++) await click('.dsh-dui-scale');
+      await click('[data-dsh-desktop-ui-toggle]');
+    }
+    await delay(1200);
     await send('Page.reload');
     await wait(`!!document.querySelector('[data-dsh-desktop-ui-toggle]')`);
     await dismissOnboarding();
     check('plugin registered in boot graph', await evaluate(`window.__DSH_BOOT__.entries.some(e => e.id === 'dsh-desktop-ui')`));
-    check('toggle sits directly above Settings', await evaluate(`(() => { const t = document.querySelector('[data-dsh-desktop-ui-toggle]'); const s = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Settings'); if (!t || !s) return false; const a = t.getBoundingClientRect(), b = s.getBoundingClientRect(); return a.bottom <= b.top + 1 && b.top - a.bottom < 40; })()`));
+    check('toggle sits above Settings, first among footer actions', await evaluate(`(() => { const t = document.querySelector('[data-dsh-desktop-ui-toggle]'); const s = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Settings'); if (!t || !s) return false; const a = t.getBoundingClientRect(), b = s.getBoundingClientRect(); const row = t.closest('[class*="_footerActions"]'); const first = row && [...row.querySelectorAll('button')][0] === t; return a.bottom <= b.top + 1 && b.top - a.bottom < 120 && first; })()`));
+    check('footer actions stack instead of sharing one row', await evaluate(`(() => { const row = document.querySelector('[data-dsh-desktop-ui-toggle]')?.closest('[class*="_footerActions"]'); if (!row) return false; const kids = [...row.querySelectorAll(':scope > *')].filter(n => n.getBoundingClientRect().height > 0); return getComputedStyle(row).flexDirection === 'column' && kids.every(k => Math.abs(k.getBoundingClientRect().width - row.getBoundingClientRect().width) < 8); })()`));
     check('desktop off by default (stock conversation)', !(await evaluate(`!!document.querySelector('[data-dsh-desktop-ui]')`)));
     await click('[data-dsh-desktop-ui-toggle]');
     check('toggle switches the content area into the desktop', await wait(`!!document.querySelector('[data-dsh-desktop-ui]')`));
@@ -117,6 +132,9 @@ try {
     check('one taskbar entry per window', await evaluate(`document.querySelectorAll('.dsh-dui-task').length === document.querySelectorAll('.dsh-dui-win').length`));
     check('seeded transcript renders inside a window', await wait(`[...document.querySelectorAll('.dsh-dui-win .dsh-dui-body')].some(b => /checklist|flaky|README/.test(b.innerText))`));
     check('embedded conversation renders in each window', await wait(`[...document.querySelectorAll('.dsh-dui-win')].every(w => w.querySelector('[data-conversation-content]'))`));
+    check('windows render the full stock conversation (header included)', await wait(`[...document.querySelectorAll('.dsh-dui-win')].every(w => w.querySelector('.dsh-dui-content[data-dsh-desktop-ui-full] [data-phase]'))`, 40));
+    const zoomNow = await evaluate(`parseFloat(document.querySelector('.dsh-dui-scale')?.textContent) / 100`);
+    check('window content uses one uniform zoom (matches the taskbar setting)', await evaluate(`[...document.querySelectorAll('.dsh-dui-content')].every(c => Math.abs(parseFloat(getComputedStyle(c).zoom) - ${zoomNow}) < 0.01)`), zoomNow);
     check('each window has its own composer', await evaluate(`document.querySelectorAll('.dsh-dui-win [contenteditable=true]').length === document.querySelectorAll('.dsh-dui-win').length`));
     await shot('01-cascade');
 
@@ -179,9 +197,28 @@ try {
     check('closing a window keeps the session in the sidebar', await evaluate(`!!document.querySelector('[data-row-key="session:${last}"]')`));
 
     const saved = await state();
+    await delay(900);
     await send('Page.reload');
     await dismissOnboarding();
     check('desktop mode survives reload', await wait(`!!document.querySelector('[data-dsh-desktop-ui]')`));
+    // Text size control: one click steps up and is applied to every window.
+    await wait(`!!document.querySelector('.dsh-dui-scale')`, 30);
+    const z0 = await evaluate(`document.querySelector('.dsh-dui-scale')?.textContent`);
+    await click('.dsh-dui-scale');
+    const z1 = await evaluate(`document.querySelector('.dsh-dui-scale')?.textContent`);
+    const z1n = parseFloat(z1) / 100;
+    check('text size control rescales window content', z1 !== z0 && await wait(`[...document.querySelectorAll('.dsh-dui-content')].every(c => Math.abs(parseFloat(getComputedStyle(c).zoom) - ${z1n}) < 0.01)`, 20), { z0, z1 });
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: (await center('.dsh-dui-scale')).x, y: (await center('.dsh-dui-scale')).y, button: 'right', buttons: 2, clickCount: 1 });
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: (await center('.dsh-dui-scale')).x, y: (await center('.dsh-dui-scale')).y, button: 'right', buttons: 0, clickCount: 1 });
+    check('right-click steps the text size back down', await wait(`document.querySelector('.dsh-dui-scale')?.textContent === ${JSON.stringify(z0)}`, 20));
+    // Host persistence: a brand-new browser profile (no localStorage) must get the same desktop.
+    await delay(900);
+    await evaluate(`localStorage.removeItem('dsh-desktop-ui.state.v1')`);
+    await send('Page.reload');
+    await dismissOnboarding();
+    const restoredOk = await wait(`!!document.querySelector('[data-dsh-desktop-ui]') && document.querySelectorAll('.dsh-dui-win').length >= 1`, 60);
+    const restoredIds = await evaluate(`[...document.querySelectorAll('.dsh-dui-win')].map(n => n.getAttribute('data-session-id')).sort().join()`);
+    check('layout restores from the Host when the browser copy is gone', restoredOk && restoredIds === saved.windows.map(w => w.sessionId).sort().join(), { restoredIds, saved: saved.windows.map(w => w.sessionId).sort().join() });
     await wait(`document.querySelectorAll('.dsh-dui-win').length === ${saved.windows.length}`, 50);
     // Every saved window whose session still exists must come back. The
     // current main session may also be reopened; nothing else may appear.
@@ -194,20 +231,34 @@ try {
     const extra = restored.filter(id => !savedIds.includes(id));
     check('window set survives reload', missing.length === 0 && extra.length <= 1, { savedIds, restored, listed });
 
+    // A corrupted browser copy must never break the desktop; the Host copy wins.
     await evaluate(`localStorage.setItem('dsh-desktop-ui.state.v1', '{"enabled":true,"windows":[{"sessionId":"<img src=x onerror=alert(1)>","x":"bad","w":99},{"sessionId":42},null]}')`);
     await send('Page.reload');
     await dismissOnboarding();
     await wait(`!!document.querySelector('[data-dsh-desktop-ui]')`);
-    await delay(800);
-    check('malformed stored state is sanitized safely', await evaluate(`!document.querySelector('.dsh-dui-win img') && !!document.querySelector('[data-dsh-desktop-ui]')`));
-    // Unknown ids are pruned; only the current main session may reopen.
-    await delay(800);
+    await delay(1200);
+    check('malformed browser state is ignored safely', await evaluate(`!document.querySelector('.dsh-dui-win img') && !document.querySelector('.dsh-dui-win[data-session-id^="<"]')`));
     const after = await evaluate(`[...document.querySelectorAll('.dsh-dui-win')].map(n => n.getAttribute('data-session-id'))`);
-    const listedNow = await evaluate(`[...document.querySelectorAll('[role=treeitem]')].map(e => e.getAttribute('data-row-key')).filter(k => k?.startsWith('session:')).map(k => k.slice(8))`);
-    check('deleted/unknown sessions are pruned', after.length <= 1 && after.every(id => listedNow.includes(id)), after);
-    for (const id of after) await click(`.dsh-dui-win[data-session-id="${id}"] button[aria-label^="Close"]`);
-    check('empty desktop shows guidance', await wait(`/No windows open/.test(document.querySelector('[data-dsh-desktop-ui]').innerText)`, 20));
+    const known = await evaluate(`(async () => { const ids = [...document.querySelectorAll('.dsh-dui-win')].map(n => n.getAttribute('data-session-id')); return ids.filter(id => !document.querySelector('.dsh-dui-win[data-session-id="' + id + '"] .dsh-dui-note')); })()`);
+    check('only real sessions get windows (each one opens)', after.length > 0 && known.length === after.length && after.every(id => /^session-[\w-]+$/.test(id)), { after, known });
+    // Let the restored desktop settle (boot selection), then close everything.
+    await delay(3000);
+    for (let pass = 0; pass < 3; pass++) {
+      const open = await evaluate(`[...document.querySelectorAll('.dsh-dui-win')].map(n => n.getAttribute('data-session-id'))`);
+      if (!open.length) break;
+      for (const id of open) await click(`.dsh-dui-win[data-session-id="${id}"] button[aria-label^="Close"]`);
+      await delay(500);
+    }
+    check('empty desktop shows guidance', await wait(`/No windows open/.test(document.querySelector('[data-dsh-desktop-ui]').innerText)`, 20), await evaluate(`[...document.querySelectorAll('.dsh-dui-win')].map(n => n.getAttribute('data-session-id'))`));
+    await delay(800);
 
+    // A closed window must stay closed after a reload (DSH reselecting the
+    // last session on boot is not a user action).
+    await send('Page.reload');
+    await dismissOnboarding();
+    await wait(`!!document.querySelector('[data-dsh-desktop-ui]')`);
+    await delay(3200);
+    check('closed windows stay closed after reload', await evaluate(`document.querySelectorAll('.dsh-dui-win').length === 0`), await evaluate(`[...document.querySelectorAll('.dsh-dui-win')].map(n => n.getAttribute('data-session-id'))`));
     const firstRow = await evaluate(`[...document.querySelectorAll('[role=treeitem]')].map(e => e.getAttribute('data-row-key')).find(k => k?.startsWith('session:'))`);
     await click(`[data-row-key="${firstRow}"] span[class*="_title"]`);
     await wait(`document.querySelectorAll('.dsh-dui-win').length > 0`, 30);

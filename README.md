@@ -1,82 +1,113 @@
 # dsh-desktop-ui
 
-Desktop mode for the DeepSeek Harness web GUI. The sidebar stays exactly as it is; the conversation area becomes a canvas where every session is a window, with a taskbar along the bottom.
+**Desktop mode** for the DeepSeek Harness web GUI. Keep the sidebar exactly as it
+is, and turn the conversation area into a desktop where every session is a
+movable, resizable window — with a taskbar along the bottom.
 
-- **Toggle**: a *Desktop mode* switch sits directly above **Settings** in the sidebar. Off by default; the choice persists in this browser.
-- **Windows**: clicking a session in the sidebar opens it as a window. A session can only have one window — clicking it again restores and focuses the existing one. Each window is a full, live conversation with its own composer, using a compact chat style (smaller text, buttons and pickers, tighter spacing). Untitled sessions get a short id suffix so windows stay distinguishable.
-- **Window controls**: drag the title bar to move, drag any edge or corner to resize, double-click the title to maximize/restore, and use the minimize, maximize and close buttons. Drag a window to the left/right edge to snap it to half the screen, or to the top to maximize.
-- **Taskbar**: a New session button, one button per open window (click to focus; click the focused one to minimize; a dot shows running sessions), layout buttons (Cascade, Tile, Side by side), a clock, and a Show desktop strip at the far right.
-- **Theme**: uses DSH theme tokens only, so light and dark follow the GUI.
-- **Narrow screens**: under 720px wide, the focused window fills the canvas and switching happens through the taskbar.
+[![npm version](https://img.shields.io/npm/v/dsh-desktop-ui.svg)](https://www.npmjs.com/package/dsh-desktop-ui)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![CI](https://github.com/mrbeandev/dsh-desktop-ui/actions/workflows/check.yml/badge.svg)](https://github.com/mrbeandev/dsh-desktop-ui/actions/workflows/check.yml)
 
-Closing a window never deletes or archives a session. Window layout lives in `localStorage` (`dsh-desktop-ui.state.v1`); nothing is written to the Host.
+- **Source code:** [github.com/mrbeandev/dsh-desktop-ui](https://github.com/mrbeandev/dsh-desktop-ui)
+- **npm package:** [npmjs.com/package/dsh-desktop-ui](https://www.npmjs.com/package/dsh-desktop-ui)
 
-The earlier static concept pages (Harness OS options A and B) remain in [`designs/`](designs/README.md) for reference.
+**Contents:** [Why](#why-this-plugin-exists) · [Install](#install-from-npm) ·
+[Features](#features) · [Compatibility](#compatibility-and-limitations) ·
+[Development](#build-and-test) · [Local setup](./LOCAL-SETUP.md) · [Release checklist](./RELEASE.md)
 
-## Install
+![Desktop mode with four sessions tiled, light theme](https://raw.githubusercontent.com/mrbeandev/dsh-desktop-ui/main/assets/desktop-mode-light.png)
+
+## Why this plugin exists
+
+DSH shows one conversation at a time. When you juggle several sessions — a long
+agent run, a quick question, a code review — you keep clicking back and forth in
+the sidebar. Desktop mode lets you keep them all on screen at once, arrange them
+side by side, and park the rest in a taskbar.
+
+## Install from npm
 
 ```bash
-npm run check                      # build, unit tests, pack dry-run
-npm pack --pack-destination /tmp
-dsh plugin --profile web add /tmp/dsh-desktop-ui-0.1.0.tgz
+dsh plugin --profile web add dsh-desktop-ui
 ```
 
-Restart `dsh web` and refresh the page. Remove with `dsh plugin --profile web remove dsh-desktop-ui`.
+Restart `dsh web` when asked, then refresh the DSH page. A **Desktop mode** switch
+appears in the sidebar, directly above **Settings**.
 
-## How it plugs in (DSH 0.2.0-rc.2)
+To remove:
+
+```bash
+dsh plugin --profile web remove dsh-desktop-ui
+```
+
+Restart and refresh. The normal conversation view comes back unchanged; only the
+browser-local window layout remains in `localStorage`.
+
+## Features
+
+| Feature | What it does |
+|---|---|
+| **Desktop mode switch** | Sits directly above Settings. Off by default; the choice persists in this browser. Turning it off returns to the normal conversation on the focused window's session. |
+| **Sessions as windows** | Clicking a session in the sidebar opens it as a window. A session can only have one window — clicking it again restores and focuses the existing one. Every window is a full, live conversation with its own composer. |
+| **Window controls** | Drag the title bar to move; drag any edge or corner to resize; double-click the title to maximize/restore; minimize, maximize and close buttons. |
+| **Snapping** | Drag a window to the left or right edge to fill that half, or to the top to maximize. |
+| **Taskbar** | New session button, one button per window (click to focus, click the focused one to minimize, a dot shows running sessions), Cascade / Tile / Side-by-side layouts, a clock, and a Show desktop strip at the far right. |
+| **Compact chat** | Inside windows the chat uses smaller text, buttons and pickers, and tighter spacing. The normal full-width conversation is untouched. |
+| **Light and dark** | Uses DSH's own theme tokens only, so it follows the GUI theme automatically. |
+| **Narrow screens** | Below 720px the focused window fills the canvas and you switch through the taskbar. |
+
+Closing a window never deletes or archives a session. Nothing is written to the
+Host: the window layout lives in browser `localStorage` under
+`dsh-desktop-ui.state.v1`. The plugin makes no network requests and stores no
+credentials or session contents.
+
+![Desktop mode in the dark theme](https://raw.githubusercontent.com/mrbeandev/dsh-desktop-ui/main/assets/desktop-mode-dark.png)
+
+## Compatibility and limitations
+
+**Requires DSH `>=0.2.0-rc.2 <0.3.0`.** Tested on DSH 0.2.0-rc.2 with Node 24.
+
+This is an **internal integration**, not a stable public DSH API. It plugs into:
 
 | Seam | Use |
 |---|---|
-| `main` keyed slot, key `dsh-desktop-ui` | the desktop canvas + taskbar, selected with `ctx.layout.selectPanel` |
-| `dsh-desktop-ui.window` (session-scoped child) | one window body per session, rendering the public `conversation.content` factory with `variant: 'embedded'` — the same seam `ui-subagent` uses for sidebar chats |
-| `sidebar.footer.action` | the Desktop mode switch (rendered directly above Settings) |
+| `main` keyed slot, key `dsh-desktop-ui` | the desktop canvas and taskbar, selected with `ctx.layout.selectPanel` |
+| `dsh-desktop-ui.window` (session-scoped child slot) | one window body per session, rendering the `conversation.content` factory with `variant: 'embedded'` — the same seam `ui-subagent` uses for sidebar chats |
+| `sidebar.footer.action` | the Desktop mode switch |
 | `ctx.sessions.retain(id, { source: 'desktopWindow' })` | each window owns an independent session reference, released on close |
-| `ctx.uiWorkspace.openSession / startSession` | keeps the sidebar highlight in sync and creates new sessions |
+| `ctx.uiWorkspace.openSession` / `startSession` | keeps the sidebar selection in sync and creates new sessions |
 
-While Desktop mode is on, stock navigation that would reveal the normal conversation (sidebar clicks, New Session, shortcuts) is captured: the selected session opens as a window and the desktop stays visible. Turning the switch off returns to the normal conversation on the focused window's session.
+While Desktop mode is on, navigation that would normally reveal the conversation
+(sidebar clicks, New Session, shortcuts) is captured: the session opens as a
+window and the desktop stays visible.
 
-Client inject list: `dsh-api-session-controller`, `dsh-client-ui-layout`, `dsh-client-ui-session`, `dsh-client-ui-sidebar`, `dsh-client-ui-conversation`, `dsh-client-ui-chat`, `dsh-client-ui-workspace`.
+Known limitations:
 
-## Source layout
+- Later DSH versions may change these internal seams; the plugin may need an update.
+- The right sidebar (files, terminal, browser) still belongs to the main session, not to individual windows.
+- Window positions are stored per browser, not per account or device.
+- Compact styling targets DSH 0.2.0-rc.2 class names; a future DSH restyle can make some of it fall back to stock sizes (harmless, just less compact).
+- The UI strings are English only.
+- Not yet tested: two tabs at once, a live model turn streaming inside a window, and coexistence with other sidebar plugins.
 
-- `client/index.mjs` — source of truth (self-contained factory; React comes from the GUI).
-- `lib/client.js` — generated by `npm run build`; git-ignored, included in the tarball.
-- `index.mjs`, `cordis.patch.yml` — host entry and bundle registration (no host behaviour).
-- `test/state.test.mjs` — window-manager state, sanitising, identities, bundle freshness.
-- `scripts/e2e-gui.mjs`, `scripts/e2e-fixtures.mjs` — browser end-to-end test and offline fixtures.
+## Build and test
 
-## Testing in an isolated DSH home
-
-Never test in your real profile. This follows the same flow as `dsh-workspace-sorter` and `dsh-image-edge-cap`.
-
-```bash
-export DSH_HOME="$(mktemp -d /tmp/dsh-desktop-ui-e2e.XXXXXX)"
-dsh plugin --profile web add /tmp/dsh-desktop-ui-0.1.0.tgz
-cp scripts/e2e-fixtures.mjs "$DSH_HOME/fixtures.mjs"   # must live outside this package
-cat > "$DSH_HOME/profiles/web/cordis.patch.yml" <<EOF
-- insert:
-    - id: desktop-ui-e2e-fixtures
-      name: $DSH_HOME/fixtures.mjs
-EOF
-dsh web --no-open --port 18766
-# in another terminal, with the printed URL:
-DSH_E2E_URL='http://127.0.0.1:18766/?token=…' DSH_E2E_SHOTS=/tmp/shots npm run test:e2e
+```sh
+npm run check     # build lib/client.js, run unit tests, npm pack --dry-run
+npm pack
 ```
 
-The fixture plugin refuses any home outside `/tmp/dsh-desktop-ui-e2e.*` and seeds three offline sessions (no provider, key or model call). After `dsh plugin --profile web remove dsh-desktop-ui` and a restart, run again with `DSH_E2E_ABSENT=1` to confirm a clean removal.
+- Editable client source is `client/index.mjs`. `scripts/build.mjs` writes `lib/client.js`, a lazy module that uses the GUI's own React (React is not bundled). CI fails if the committed `lib/client.js` is stale.
+- `index.mjs` is an intentional no-op host entry; `cordis.patch.yml` registers the package.
+- Client inject list: `dsh-api-session-controller`, `dsh-client-ui-layout`, `dsh-client-ui-session`, `dsh-client-ui-sidebar`, `dsh-client-ui-conversation`, `dsh-client-ui-chat`, `dsh-client-ui-workspace`.
+- `test/state.test.mjs` covers the window manager (open/focus/minimize/maximize/close, one window per session, move never resizes, snapping, layouts, show desktop, pruning, state sanitising), runtime identities, and bundle freshness.
+- `scripts/e2e-gui.mjs` is a dependency-free headless Chrome/CDP test against a real, isolated DSH instance. See [LOCAL-SETUP.md](./LOCAL-SETUP.md).
 
-Results on 2026-10-17 against DSH 0.2.0-rc.2, headless Chrome:
+## Design concepts
 
-- unit tests: **17/17**
-- installed from the packed tarball: **43/43** (toggle placement, open/focus from the sidebar, one window per session, move keeps size, embedded conversations and composers, move, resize, minimize, taskbar restore/minimize, maximize/restore, edge snap, tile/columns/cascade, show desktop, close, reload persistence, malformed-state sanitising, pruning, empty state, narrow layout, toggle off and persistence, zero browser errors)
-- removed: **5/5** (no toggle, absent from boot graph, stock conversation, no errors)
-- reinstalled: **43/43**
-- dark theme checked visually
+The early, standalone "Harness OS" design explorations that led to this plugin
+are kept in [`designs/`](./designs/README.md). They are static HTML demos and are
+not part of the npm package.
 
-Not yet covered: two concurrent tabs, a live model turn streaming inside a window, coexistence with other sidebar plugins, and registry installation (the package is private and unpublished).
+## License
 
-## Known limitations
-
-- Uses internal DSH seams (`main` panel selection, the `conversation.content` factory, `uiSession.adapter.current`) pinned to 0.2.0-rc.2. Later versions may need adjustments.
-- The stock right sidebar (files, terminal, browser) still belongs to the main session, not to individual windows.
-- Window positions are stored per browser, not per account or device.
+[MIT](./LICENSE)

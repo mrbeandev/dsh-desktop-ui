@@ -1,5 +1,7 @@
 # Design concepts (Harness OS A and B)
 
+> Early standalone design explorations that preceded the `dsh-desktop-ui` plugin. They are static HTML demos with simulated data, not part of the npm package.
+
 A minimal, Linux-inspired desktop concept for DeepSeek Harness. Graphite windows, mineral wallpaper, mint status lights, and readable type. A standalone HTML/CSS/JavaScript prototype—not a Harness plugin or replacement runtime.
 
 ## Preview

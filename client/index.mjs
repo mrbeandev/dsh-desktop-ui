@@ -83,7 +83,7 @@ export function createClientPlugin(require) {
   /** The focused window: highest z among non-minimized windows. */
   function focusedId(state) {
     let best;
-    for (const w of state.windows) if (!w.minimized && (best === undefined || w.z > best.z)) best = w;
+    for (const w of state.windows) if (!w.minimized && !w.poppedOut && (best === undefined || w.z > best.z)) best = w;
     return best?.sessionId;
   }
 
@@ -229,6 +229,40 @@ export function createClientPlugin(require) {
     if (edge.includes('w')) { w = Math.max(MIN_W, start.w - dx); x = start.x + (start.w - w); }
     if (edge.includes('n')) { h = Math.max(MIN_H, start.h - dy); y = start.y + (start.h - h); if (y < 0) { h += y; y = 0; } }
     return { x, y, w, h };
+  }
+
+  /* ---------- popout helpers (pure) ---------- */
+
+  const POPOUT_HASH = 'dsh-desktop-ui-popout';
+  const CHANNEL = 'dsh-desktop-ui.v1';
+
+  /**
+   * Whether this page runs in a regular browser. The DeepSeek desktop app's
+   * preload marks <html data-platform="…"> (the same signal DSH's own shortcut
+   * layer uses); popping out only makes sense outside it.
+   */
+  function isBrowserRuntime(doc) {
+    return doc?.documentElement?.dataset?.platform === undefined;
+  }
+
+  /** The session id this page shows as a popout, from `#dsh-desktop-ui-popout=<id>`. */
+  function popoutTarget(hash) {
+    if (typeof hash !== 'string') return undefined;
+    const m = /^#dsh-desktop-ui-popout=([A-Za-z0-9._:-]{1,256})$/.exec(hash);
+    return m ? m[1] : undefined;
+  }
+
+  /** Same-origin popout URL. The hash never reaches the server and carries no token. */
+  function popoutUrl(href, sessionId) {
+    const url = new URL(href);
+    url.search = '';
+    url.hash = `${POPOUT_HASH}=${encodeURIComponent(sessionId)}`;
+    return url.toString();
+  }
+
+  function setPopped(state, id, popped) {
+    if (!state.windows.some(w => w.sessionId === id)) return state;
+    return withWindow(state, id, { poppedOut: popped === true });
   }
 
   /** Step the window content scale through ZOOM_STEPS (wraps around). */
@@ -381,12 +415,29 @@ export function createClientPlugin(require) {
 [data-dsh-desktop-ui] button{font-family:inherit;color:inherit}
 .dsh-dui-canvas{position:relative;flex:1;min-height:0;overflow:hidden;padding-top:var(--dsh-frame-top-clearance,0px)}
 .dsh-dui-canvas-inner{position:absolute;inset:var(--dsh-frame-top-clearance,0px) 0 0 0}
-.dsh-dui-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;text-align:center;padding:24px;color:var(--dsw-alias-label-secondary)}
-.dsh-dui-empty svg{color:var(--dsw-alias-label-tertiary);margin-bottom:10px}
-.dsh-dui-empty b{font-size:16px;font-weight:500;color:var(--dsw-alias-label-primary)}
-.dsh-dui-empty span{font-size:14px;line-height:22px;max-width:360px}
-.dsh-dui-btn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;margin-top:14px;border-radius:var(--dsw-radius-md,10px);border:.5px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-base);cursor:pointer;font-size:14px}
+.dsh-dui-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;pointer-events:none}
+.dsh-dui-empty>*{pointer-events:auto}
+.dsh-dui-empty-icon{display:grid;place-items:center;width:48px;height:48px;margin-bottom:16px;border-radius:12px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}
+.dsh-dui-empty-icon svg{width:24px;height:24px}
+.dsh-dui-empty-title{margin:0;font-size:15px;line-height:22px;font-weight:500;color:var(--dsw-alias-label-primary)}
+.dsh-dui-empty-text{margin:4px 0 0;max-width:300px;font-size:13px;line-height:20px;color:var(--dsw-alias-label-tertiary)}
+.dsh-dui-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 14px 0 12px;margin-top:18px;border-radius:var(--dsw-radius-md,10px);border:.5px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);cursor:pointer;font-size:13px;line-height:18px;font-weight:500}
+.dsh-dui-btn svg{flex:none;display:block;width:14px;height:14px}
 .dsh-dui-btn:hover{background:var(--dsw-alias-interactive-bg-hover)}
+/* Popout page: just the conversation. Keep every column in its own grid track
+   (display:none would re-flow the right bar over the conversation). The right
+   bar keeps its own column so its panels still work when opened. */
+:root[data-dsh-desktop-ui-popout] [class*="_frame"][style*="grid-template-columns"]{grid-template-columns:0px minmax(0,1fr) auto!important}
+:root[data-dsh-desktop-ui-popout] [class*="_sidebarCol"]{grid-column:1;visibility:hidden;border:0!important;overflow:hidden}
+:root[data-dsh-desktop-ui-popout] [class*="_centerCol"]{grid-column:2;border-left:0!important}
+:root[data-dsh-desktop-ui-popout] [data-rightbar-col]{grid-column:3}
+:root[data-dsh-desktop-ui-popout] [data-shell-leading]{display:none!important}
+.dsh-dui-popin-btn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm,8px);background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:16px;cursor:pointer}
+.dsh-dui-popin-btn:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dsh-dui-popin-btn svg{display:block}
+.dsh-dui-popped{margin:auto;display:flex;flex-direction:column;align-items:center;text-align:center;padding:24px}
+.dsh-dui-task-pop{display:inline-flex;margin-left:2px;color:var(--dsw-alias-label-tertiary)}
+.dsh-dui-btn:focus-visible{outline:2px solid var(--dsw-alias-label-primary);outline-offset:2px}
 .dsh-dui-win{position:absolute;display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--dsw-alias-bg-base);border:.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-md,10px);box-shadow:var(--dsw-elevation-panel,0 8px 28px rgba(0,0,0,.12));overflow:hidden}
 .dsh-dui-win[data-focused]{border-color:var(--dsw-alias-border-l3);box-shadow:var(--dsw-elevation-prominent,0 16px 48px rgba(0,0,0,.18))}
 .dsh-dui-win[data-maximized]{border-radius:0;border-width:0;box-shadow:none}
@@ -478,6 +529,8 @@ export function createClientPlugin(require) {
     grid: s => icon(['M2.5 2.5h4.5v4.5h-4.5z', 'M9 2.5h4.5v4.5h-4.5z', 'M2.5 9h4.5v4.5h-4.5z', 'M9 9h4.5v4.5h-4.5z'], s),
     columns: s => icon(['M2.5 2.5h3.2v11h-3.2z', 'M6.4 2.5h3.2v11h-3.2z', 'M10.3 2.5h3.2v11h-3.2z'], s),
     chat: s => icon(['M3 3.5h10v7H6.5L3 13.5z'], s),
+    popout: s => icon(['M9 3.5h3.5V7', 'M12.5 3.5 7.5 8.5', 'M11 9.5v3h-7.5V5h3'], s),
+    popin: s => icon(['M3.5 12.5 8.5 7.5', 'M3.5 9v3.5H7', 'M7 3.5h5.5V9'], s),
   };
 
   /* ------------------------------------------------------------------ */
@@ -486,8 +539,12 @@ export function createClientPlugin(require) {
 
   function apply(ctx) {
     const storage = (() => { try { return window.localStorage; } catch { return undefined; } })();
+    // Popout pages (`#dsh-desktop-ui-popout=<id>`) show one session and never the desktop.
+    const canPopOut = isBrowserRuntime(document) && typeof window.open === 'function';
+    const popoutSelf = popoutTarget(location.hash);
     let hostSync;
-    const store = createStore(storage, text => hostSync?.persist(text));
+    // A popout page never reads or writes the shared layout (the canvas owns it).
+    const store = createStore(popoutSelf === undefined ? storage : undefined, text => hostSync?.persist(text));
     const useDesktop = selector => useSyncExternalStore(store.subscribe, () => selector(store.get()), () => selector(store.get()));
     const update = (fn, persist = true) => store.set(fn(store.get()), persist);
 
@@ -504,6 +561,7 @@ export function createClientPlugin(require) {
     // Host-backed layout: optional. Without the settings service (or on a
     // remote, memory-mode connection) the browser copy alone still works.
     ctx.inject(['configForms'], child => {
+      if (popoutSelf !== undefined) return;
       const forms = child.configForms;
       const describe = forms.describe();
       const sync = createHostSync(forms, store);
@@ -564,7 +622,7 @@ export function createClientPlugin(require) {
     // before switching panels, so windows get the full UI. Never wait long.
     let waitingForStock = false;
     function show() {
-      if (!registered || isShowing()) return;
+      if (popoutSelf !== undefined || !registered || isShowing()) return;
       if (stockConversation === undefined && !waitingForStock) {
         waitingForStock = true;
         const done = () => {
@@ -610,6 +668,7 @@ export function createClientPlugin(require) {
     // conversation by selecting panel null. While desktop mode is on, keep the
     // desktop selected and open the newly selected session as a window.
     ctx.effect(() => ctx.layout.panelInfo.subscribe(() => {
+      if (popoutSelf !== undefined) return;
       if (reclaiming || waitingForStock || !store.get().enabled || !registered || panelId() !== null) return;
       reclaiming = true;
       try {
@@ -634,6 +693,7 @@ export function createClientPlugin(require) {
 
     let lastMain = mainSessionId();
     const onMainChange = () => {
+      if (popoutSelf !== undefined) return;
       const main = mainSessionId();
       if (main === lastMain) return;
       lastMain = main;
@@ -661,7 +721,99 @@ export function createClientPlugin(require) {
       update(s => pruneMissing(s, new Set(Object.keys(list.byId))));
     }), 'dsh-desktop-ui: prune closed sessions');
 
+    /* ---------- popout (browser only) ---------- */
+
+    const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel(CHANNEL) : undefined;
+    const popups = new Map();
+    let popWatch;
+    ctx.effect(() => () => { clearInterval(popWatch); channel?.close(); }, 'dsh-desktop-ui: popout channel');
+
+    /** Mark a window popped in/out locally; popped state is never persisted. */
+    const markPopped = (id, popped) => update(s => setPopped(s, id, popped), false);
+
+    function watchPopups() {
+      if (popWatch !== undefined) return;
+      popWatch = setInterval(() => {
+        for (const [id, win] of popups) {
+          if (win.closed) { popups.delete(id); markPopped(id, false); }
+        }
+        if (popups.size === 0) { clearInterval(popWatch); popWatch = undefined; }
+      }, 700);
+    }
+
+    function popOut(id) {
+      if (!canPopOut || popoutSelf !== undefined) return;
+      const existing = popups.get(id);
+      if (existing && !existing.closed) { existing.focus(); return; }
+      const name = `dsh-desktop-ui-${id}`.replace(/[^A-Za-z0-9_-]/g, '_');
+      const win = window.open(popoutUrl(location.href, id), name, 'popup=yes,width=760,height=820');
+      if (!win) { console.warn('[dsh-desktop-ui] the browser blocked the popout window'); return; }
+      popups.set(id, win);
+      markPopped(id, true);
+      watchPopups();
+    }
+
+    function popIn(id) {
+      const win = popups.get(id);
+      if (win && !win.closed) win.close();
+      popups.delete(id);
+      update(s => focusWindow(setPopped(s, id, false), id), false);
+      channel?.postMessage({ type: 'pop-in', sessionId: id });
+    }
+
+    channel?.addEventListener('message', event => {
+      const msg = event.data;
+      if (!msg || typeof msg !== 'object' || !validId(msg.sessionId)) return;
+      if (popoutSelf !== undefined) {
+        // In a popout window: the canvas asked to bring this session back.
+        if (msg.type === 'pop-in' && msg.sessionId === popoutSelf) window.close();
+        return;
+      }
+      if (msg.type === 'popped' && store.get().windows.some(w => w.sessionId === msg.sessionId)) markPopped(msg.sessionId, true);
+      if (msg.type === 'pop-in-request') popIn(msg.sessionId);
+      if (msg.type === 'closed') { popups.delete(msg.sessionId); markPopped(msg.sessionId, false); }
+    });
+
+    /*
+     * This page IS a popout (`#dsh-desktop-ui-popout=<id>`): show that one
+     * session full-window. The sidebar and Desktop mode are hidden, the stock
+     * conversation selects the session, and a "Pop back in" button sits in the
+     * conversation header (`conversation.header.leading`, unused by stock DSH).
+     */
+    if (popoutSelf !== undefined) {
+      document.documentElement.setAttribute('data-dsh-desktop-ui-popout', '');
+      ctx.effect(() => () => document.documentElement.removeAttribute('data-dsh-desktop-ui-popout'), 'dsh-desktop-ui: popout chrome');
+      const tell = type => channel?.postMessage({ type, sessionId: popoutSelf });
+      tell('popped');
+      const onHide = () => tell('closed');
+      window.addEventListener('pagehide', onHide);
+      ctx.effect(() => () => window.removeEventListener('pagehide', onHide), 'dsh-desktop-ui: popout close');
+      let opened = false;
+      const openSelf = () => {
+        if (opened) return;
+        if (ctx.sessions.list.getSnapshot().byId[popoutSelf] === undefined) return;
+        opened = true;
+        try { ctx.uiWorkspace.openSession(popoutSelf); } catch (error) { console.warn('[dsh-desktop-ui] popout could not open its session:', error); }
+      };
+      ctx.effect(() => ctx.sessions.list.subscribe(openSelf), 'dsh-desktop-ui: popout session');
+      openSelf();
+      // Keep the window pinned to its session if the stock UI navigates away.
+      if (ctx.uiSession?.adapter?.current?.subscribe) {
+        ctx.effect(() => ctx.uiSession.adapter.current.subscribe(() => {
+          const main = mainSessionId();
+          if (opened && main !== undefined && main !== popoutSelf) { try { ctx.uiWorkspace.openSession(popoutSelf); } catch { /* ignore */ } }
+        }), 'dsh-desktop-ui: popout pin');
+      }
+      function PopBackIn() {
+        return h('button', { type: 'button', className: 'dsh-dui-popin-btn', 'data-popin': '', title: 'Close this window and return the session to the Desktop',
+          onClick: () => { tell('pop-in-request'); setTimeout(() => window.close(), 150); } }, I.popin(14), h('span', null, 'Pop back in'));
+      }
+      ctx.effect(() => ctx.slots.inject('conversation.header.leading', () => ctx.slots.register({ name: 'conversation.header.leading' }, PopBackIn)), 'dsh-desktop-ui: popout header');
+    }
+
     const actions = {
+      popOut: id => popOut(id),
+      popIn: id => popIn(id),
       open: id => update(s => openWindow(s, id)),
       close: id => update(s => closeWindow(s, id)),
       focus: id => { update(s => focusWindow(s, id)); syncSidebar(id); },
@@ -778,7 +930,7 @@ export function createClientPlugin(require) {
       const statusRunning = useSessionStatus(map => map.get(sessionId)?.running);
       const summaryRunning = useSessions(state => state.byId[sessionId]?.running === true);
       const running = statusRunning ?? summaryRunning;
-      const { reference, error } = useSessionReference(sessionId);
+      const { reference, error } = useSessionReference(win.poppedOut ? undefined : sessionId);
       const [live, setLive] = useState(null);
       const [dragging, setDragging] = useState(false);
       const maximized = win.maximized || narrow;
@@ -856,12 +1008,18 @@ export function createClientPlugin(require) {
       h('span', { className: 'dsh-dui-dot', 'data-running': running ? '' : undefined, title: running ? 'Running' : 'Idle' }),
       h('span', { className: 'dsh-dui-title-text', title }, title),
       h('div', { className: 'dsh-dui-ctl' },
+        canPopOut && popoutSelf === undefined ? h('button', { type: 'button', 'data-popout': '', 'aria-label': `Pop out ${title} into a new browser window`, title: 'Pop out into a new window', onClick: () => actions.popOut(sessionId) }, I.popout()) : null,
         h('button', { type: 'button', 'aria-label': `Minimize ${title}`, title: 'Minimize', onClick: () => actions.minimize(sessionId) }, I.min()),
         narrow ? null : h('button', { type: 'button', 'aria-label': `${win.maximized ? 'Restore' : 'Maximize'} ${title}`, title: win.maximized ? 'Restore' : 'Maximize', onClick: () => actions.toggleMax(sessionId) }, win.maximized ? I.restore() : I.max()),
         h('button', { type: 'button', 'data-close': '', 'aria-label': `Close ${title}`, title: 'Close', onClick: () => actions.close(sessionId) }, I.close())));
 
       let body;
-      if (error !== undefined) body = h('div', { className: 'dsh-dui-note' }, 'This session could not be opened. ', error);
+      if (win.poppedOut) body = h('div', { className: 'dsh-dui-popped' },
+        h('div', { className: 'dsh-dui-empty-icon', 'aria-hidden': 'true' }, I.popout(24)),
+        h('p', { className: 'dsh-dui-empty-title' }, 'Open in another window'),
+        h('p', { className: 'dsh-dui-empty-text' }, 'This session is popped out into its own browser window.'),
+        h('button', { type: 'button', className: 'dsh-dui-btn', 'data-popin': '', onClick: () => actions.popIn(sessionId) }, I.popin(14), h('span', null, 'Pop back in')));
+      else if (error !== undefined) body = h('div', { className: 'dsh-dui-note' }, 'This session could not be opened. ', error);
       else if (reference === undefined) body = h('div', { className: 'dsh-dui-note' }, 'Opening…');
       else body = h(SessionProvider, { session: reference }, renderSlot(WINDOW_SLOT, {}));
 
@@ -899,11 +1057,12 @@ export function createClientPlugin(require) {
         'data-focused': focused ? '' : undefined,
         'aria-pressed': focused,
         'data-session-id': win.sessionId,
-        title: `${title}${win.minimized ? ' (minimized)' : ''}`,
-        onClick: () => actions.taskClick(win.sessionId),
+        title: `${title}${win.poppedOut ? ' (popped out)' : win.minimized ? ' (minimized)' : ''}`,
+        onClick: () => (win.poppedOut ? actions.popOut(win.sessionId) : actions.taskClick(win.sessionId)),
       },
       h('span', { className: 'dsh-dui-dot', 'data-running': running ? '' : undefined }),
-      h('span', null, title));
+      h('span', null, title),
+      win.poppedOut ? h('span', { className: 'dsh-dui-task-pop', title: 'Popped out', 'aria-label': 'popped out' }, I.popout(12)) : null);
     }
 
     function Desktop({ renderSlot, SessionProvider, useSessions, useSessionStatus }) {
@@ -937,12 +1096,13 @@ export function createClientPlugin(require) {
         h('div', { className: 'dsh-dui-canvas' },
           h('div', { className: 'dsh-dui-canvas-inner', ref: canvasRef },
             windows.length === 0 ? h('div', { className: 'dsh-dui-empty' },
-              I.desktop(40),
-              h('b', null, 'No windows open'),
-              h('span', null, 'Pick a session in the sidebar to open it here, or start a new one.'),
-              h('button', { type: 'button', className: 'dsh-dui-btn', onClick: actions.newSession }, I.plus(), 'New session'))
+              h('div', { className: 'dsh-dui-empty-icon', 'aria-hidden': 'true' }, I.desktop(24)),
+              h('p', { className: 'dsh-dui-empty-title' }, 'No windows open'),
+              h('p', { className: 'dsh-dui-empty-text' }, 'Choose a session in the sidebar, or start a new one.'),
+              h('button', { type: 'button', className: 'dsh-dui-btn', onClick: actions.newSession }, I.plus(14), h('span', null, 'New session')))
               : visible === 0 ? h('div', { className: 'dsh-dui-empty' },
-                h('span', null, 'All windows are minimized. Select one in the taskbar to restore it.')) : null,
+                h('p', { className: 'dsh-dui-empty-title' }, 'All windows are minimized'),
+                h('p', { className: 'dsh-dui-empty-text' }, 'Select one in the taskbar to bring it back.')) : null,
             windows.map(win => h(Window, {
               key: win.sessionId, win, focused: win.sessionId === focus, narrow: narrow && win.sessionId === focus ? true : narrow,
               size, canvasRef, onSnapPreview: setSnap, renderSlot, SessionProvider, useSessions, useSessionStatus,
@@ -1002,7 +1162,7 @@ export function createClientPlugin(require) {
 
     ctx.effect(() => ctx.slots.inject(WINDOW_SLOT, () => ctx.slots.register({ name: WINDOW_SLOT }, WindowContent)), 'dsh-desktop-ui: window body');
 
-    ctx.effect(() => ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
+    if (popoutSelf === undefined) ctx.effect(() => ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
       name: 'sidebar.footer.action',
       id: TOGGLE_ID,
       // List entries render in ascending order (stock default 0; dsh-all-usage
@@ -1016,7 +1176,7 @@ export function createClientPlugin(require) {
     apply,
     // Pure helpers for tests.
     sanitize, serialize, parseLayout, createStore, createHostSync, findEntryNamespace, uniqueWindows, openWindow, closeWindow, focusWindow, minimizeWindow, toggleMaximize,
-    setGeometry, snapWindow, snapGeometry, arrange, dragRect, arrangeGeometry, toggleShowDesktop, cycleZoom, pruneMissing, focusedId, emptyState,
+    setGeometry, snapWindow, snapGeometry, arrange, dragRect, arrangeGeometry, toggleShowDesktop, cycleZoom, isBrowserRuntime, popoutTarget, popoutUrl, setPopped, pruneMissing, focusedId, emptyState,
     constants: { PANEL, WINDOW_SLOT, TOGGLE_ID, TOGGLE_ORDER, STORAGE_KEY, MAX_WINDOWS, ZOOM_STEPS, DEFAULT_ZOOM },
   };
 }

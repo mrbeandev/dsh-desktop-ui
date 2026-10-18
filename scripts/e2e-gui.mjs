@@ -65,10 +65,14 @@ try {
     await writeFile(join(shots, `${name}.png`), Buffer.from(r.result.data, 'base64'));
   };
   const dismissOnboarding = async () => {
-    // A fresh profile shows the "Add an API key" dialog shortly after boot.
-    for (let i = 0; i < 30; i++) {
-      const c = await evaluate(`(() => { const b = [...document.querySelectorAll('button')].find(e => e.textContent.trim() === 'Configure later'); if (!b) return null; const r = b.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
-      if (c) { await mouse('mousePressed', c.x, c.y); await mouse('mouseReleased', c.x, c.y); await delay(400); return; }
+    // A fresh profile shows "Preview Notice" (Continue) and then "Add an API key"
+    // (Configure later), the second several seconds after load. Keep dismissing
+    // until none has appeared for ~3.5s.
+    let quiet = 0;
+    for (let i = 0; i < 120 && quiet < 35; i++) {
+      const c = await evaluate(`(() => { const b = [...document.querySelectorAll('button')].find(e => ['Configure later', 'Continue'].includes(e.textContent.trim()) && e.closest('[role=dialog], [role=presentation], [aria-modal=true]')); if (!b) return null; const r = b.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+      if (c) { await mouse('mousePressed', c.x, c.y); await mouse('mouseReleased', c.x, c.y); await delay(400); quiet = 0; continue; }
+      quiet++;
       await delay(100);
     }
   };
@@ -95,15 +99,24 @@ try {
       for (let pass = 0; pass < 3; pass++) {
         const open = await evaluate(`[...document.querySelectorAll('.dsh-dui-win')].map(n => n.getAttribute('data-session-id'))`);
         if (!open.length) break;
-        for (const id of open) await click(`.dsh-dui-win[data-session-id="${id}"] button[aria-label^="Close"]`);
+        for (const id of open) {
+          if (await evaluate(`document.querySelector('.dsh-dui-win[data-session-id="${id}"]')?.hidden === true`)) await click(`.dsh-dui-task[data-session-id="${id}"]`);
+          const popin = `.dsh-dui-win[data-session-id="${id}"] [data-popin]`;
+          if (await evaluate(`!!document.querySelector(${JSON.stringify(popin)})`)) await click(popin);
+          if (await evaluate(`!!document.querySelector('.dsh-dui-win[data-session-id="${id}"] button[aria-label^="Close"]')`)) await click(`.dsh-dui-win[data-session-id="${id}"] button[aria-label^="Close"]`);
+        }
       }
       for (let i = 0; i < 8 && (await evaluate(`document.querySelector('.dsh-dui-scale')?.textContent`)) !== '85%'; i++) await click('.dsh-dui-scale');
       await click('[data-dsh-desktop-ui-toggle]');
     }
-    await delay(1200);
+    // Wait until the Host copy says Desktop mode is off before reloading.
+    await wait(`(() => { try { return JSON.parse(localStorage.getItem('dsh-desktop-ui.state.v1') || '{}').enabled !== true; } catch { return true; } })()`, 40);
+    await delay(1500);
     await send('Page.reload');
     await wait(`!!document.querySelector('[data-dsh-desktop-ui-toggle]')`);
     await dismissOnboarding();
+    await delay(1500);
+    if (await evaluate(`!!document.querySelector('[data-dsh-desktop-ui]')`)) { await click('[data-dsh-desktop-ui-toggle]'); await delay(1000); }
     check('plugin registered in boot graph', await evaluate(`window.__DSH_BOOT__.entries.some(e => e.id === 'dsh-desktop-ui')`));
     check('toggle sits above Settings, first among footer actions', await evaluate(`(() => { const t = document.querySelector('[data-dsh-desktop-ui-toggle]'); const s = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Settings'); if (!t || !s) return false; const a = t.getBoundingClientRect(), b = s.getBoundingClientRect(); const row = t.closest('[class*="_footerActions"]'); const first = row && [...row.querySelectorAll('button')][0] === t; return a.bottom <= b.top + 1 && b.top - a.bottom < 120 && first; })()`));
     check('footer actions stack instead of sharing one row', await evaluate(`(() => { const row = document.querySelector('[data-dsh-desktop-ui-toggle]')?.closest('[class*="_footerActions"]'); if (!row) return false; const kids = [...row.querySelectorAll(':scope > *')].filter(n => n.getBoundingClientRect().height > 0); return getComputedStyle(row).flexDirection === 'column' && kids.every(k => Math.abs(k.getBoundingClientRect().width - row.getBoundingClientRect().width) < 8); })()`));
@@ -117,11 +130,23 @@ try {
     await click('.dsh-dui-taskbar button[aria-label="New session"]');
     check('taskbar New session opens a window, desktop stays', await wait(`document.querySelectorAll('.dsh-dui-win').length > ${winsBeforeNew} || document.querySelector('.dsh-dui-win[data-focused]') !== null`, 40) && await evaluate(`!!document.querySelector('[data-dsh-desktop-ui]')`));
     await wait(`[...document.querySelectorAll('[role=treeitem]')].filter(e => e.getAttribute('data-row-key')?.startsWith('session:')).length >= 4`, 40);
-    const rows = await evaluate(`[...document.querySelectorAll('[role=treeitem]')].map(e => e.getAttribute('data-row-key')).filter(k => k?.startsWith('session:'))`);
+    // Workspace folders can start collapsed in a fresh profile; expand them.
+    for (let pass = 0; pass < 3; pass++) {
+      const collapsed = await evaluate(`[...document.querySelectorAll('[role=treeitem][aria-expanded=false]')].map(e => e.getAttribute('data-row-key')).filter(k => k?.startsWith('workspace:') && k !== 'workspace:')`);
+      if (!collapsed.length) break;
+      // Click the folder icon (workspace-sorter turns a name click into open-latest).
+      for (const key of collapsed) { const sel = `[data-row-key="${key}"] [class*="_folder"]`; await click((await center(sel)) ? sel : `[data-row-key="${key}"]`); }
+      await delay(500);
+    }
+    await wait(`[...document.querySelectorAll('[role=treeitem]')].filter(e => /^session:./.test(e.getAttribute('data-row-key') ?? '')).length >= 3`, 40);
+    const rows = await evaluate(`[...document.querySelectorAll('[role=treeitem]')].map(e => e.getAttribute('data-row-key')).filter(k => k?.startsWith('session:') && k !== 'session:')`);
     for (const key of rows) await click(`[data-row-key="${key}"] span[class*="_title"]`), await delay(500);
     const opened = await evaluate(`document.querySelectorAll('.dsh-dui-win').length`);
     check('sidebar clicks open every listed session as a window', opened >= rows.length && await evaluate(`!!document.querySelector('[data-dsh-desktop-ui]')`), { opened, rows: rows.length });
-    check('sidebar click on an open session focuses its window', (await focused()) === rows[rows.length - 1].slice('session:'.length));
+    const lastRow = rows[rows.length - 1];
+    await click(`[data-row-key="${lastRow}"] span[class*="_title"]`);
+    await delay(500);
+    check('sidebar click on an open session focuses its window', (await focused()) === lastRow.slice('session:'.length), { focused: await focused(), lastRow, rows });
     // Clicking every session again (and twice) must never create a second window.
     const rowsNow = await evaluate(`[...document.querySelectorAll('[role=treeitem]')].map(e => e.getAttribute('data-row-key')).filter(k => k?.startsWith('session:'))`);
     const winsBefore = await evaluate(`document.querySelectorAll('.dsh-dui-win').length`);
@@ -189,6 +214,42 @@ try {
     check('Show desktop hides all windows', (await evaluate(visibleBoxes)).length === 0);
     await click('button[aria-label="Show desktop"]');
     check('Show desktop again restores them', (await evaluate(visibleBoxes)).length >= 3);
+
+    // ---- Popout (browser only) ----
+    const popId = await focused();
+    const popSel = `.dsh-dui-win[data-session-id="${popId}"]`;
+    check('popout button is the 4th control, left of minimize', await evaluate(`(() => { const b = [...document.querySelectorAll(${JSON.stringify(popSel + ' .dsh-dui-ctl button')})]; return b.length === 4 && b[0].hasAttribute('data-popout') && /^Minimize/.test(b[1].getAttribute('aria-label')); })()`));
+    const targetsBefore = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).filter(t => t.type === 'page').map(t => t.id);
+    await click(`${popSel} button[data-popout]`);
+    let popTarget;
+    for (let i = 0; i < 50 && !popTarget; i++) { popTarget = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).find(t => t.type === 'page' && !targetsBefore.includes(t.id)); if (!popTarget) await delay(100); }
+    check('popout opens a new browser window for that session', !!popTarget && popTarget.url.endsWith(`#dsh-desktop-ui-popout=${encodeURIComponent(popId)}`) && !popTarget.url.includes('token='), popTarget?.url?.replace(/token=[^&#]+/, 'token=…'));
+    check('canvas shows a popped-out placeholder with Pop back in', await wait(`!!document.querySelector(${JSON.stringify(popSel + ' [data-popin]')})`, 30));
+    let pws;
+    if (popTarget) {
+      pws = new WebSocket(popTarget.webSocketDebuggerUrl);
+      await new Promise((resolve, reject) => { pws.onopen = resolve; pws.onerror = reject; });
+      let pseq = 0; const ppending = new Map();
+      pws.onmessage = ({ data }) => { const m = JSON.parse(data); if (m.id) { ppending.get(m.id)?.(m); ppending.delete(m.id); } };
+      const psend = (method, params = {}) => new Promise(r => { const id = ++pseq; ppending.set(id, r); pws.send(JSON.stringify({ id, method, params })); });
+      const pev = async e => (await psend('Runtime.evaluate', { expression: e, returnByValue: true, awaitPromise: true })).result?.result?.value;
+      let ready = false;
+      for (let i = 0; i < 80 && !ready; i++) { ready = await pev(`!!document.querySelector('[data-popin]') && !!document.querySelector('[data-conversation-content]')`).catch(() => false); if (!ready) await delay(150); }
+      check('popout window shows only that session, with Pop back in in its header', ready && await pev(`(() => { const sb = document.querySelector('[class*="_sidebarCol"]'); return (!sb || sb.getBoundingClientRect().width === 0) && !document.querySelector('[data-dsh-desktop-ui]') && localStorage !== undefined; })()`));
+      // A fresh test profile shows first-run dialogs in the new window too.
+      for (let i = 0, quiet = 0; i < 60 && quiet < 10; i++) {
+        const dlg = await pev(`(() => { const b = [...document.querySelectorAll('button')].find(e => ['Configure later', 'Continue'].includes(e.textContent.trim()) && e.closest('[role=dialog], [role=presentation], [aria-modal=true]')); if (!b) return null; const r = b.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+        if (dlg) { await psend('Input.dispatchMouseEvent', { type: 'mousePressed', x: dlg.x, y: dlg.y, button: 'left', buttons: 1, clickCount: 1 }); await psend('Input.dispatchMouseEvent', { type: 'mouseReleased', x: dlg.x, y: dlg.y, button: 'left', buttons: 0, clickCount: 1 }); await delay(400); quiet = 0; } else { quiet++; await delay(100); }
+      }
+      const c = await pev(`(() => { const b = document.querySelector('[data-popin]'); const r = b.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+      await psend('Input.dispatchMouseEvent', { type: 'mousePressed', x: c.x, y: c.y, button: 'left', buttons: 1, clickCount: 1 });
+      await psend('Input.dispatchMouseEvent', { type: 'mouseReleased', x: c.x, y: c.y, button: 'left', buttons: 0, clickCount: 1 });
+    }
+    check('Pop back in returns the session to the canvas', await wait(`!document.querySelector(${JSON.stringify(popSel + ' [data-popin]')}) && !!document.querySelector(${JSON.stringify(popSel + ' [data-dsh-desktop-ui-full], ' + popSel + ' .dsh-dui-content')})`, 60));
+    let gone = false;
+    for (let i = 0; i < 40 && !gone; i++) { gone = !(await (await fetch(`http://127.0.0.1:${port}/json`)).json()).some(t => t.id === popTarget?.id); if (!gone) await delay(150); }
+    check('Pop back in closes the popout window', gone);
+    try { pws?.close(); } catch {}
 
     const before = (await state()).windows.length;
     const last = await focused();

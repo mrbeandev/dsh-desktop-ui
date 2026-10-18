@@ -1,6 +1,29 @@
 # Release checklist
 
-## Current candidate: 0.1.2 (not yet published)
+## Current candidate: 0.1.3 (not yet published)
+
+Tested 2026-10-18 on DSH 0.2.0-rc.2 in a fresh disposable `DSH_HOME` under `/tmp`
+with `dsh-all-usage@1.2.0` and `dsh-rewind-plugin@0.15.0-beta.1` installed alongside,
+real headless Chrome over CDP, no model calls.
+
+| Check | Result |
+|---|---|
+| Unit tests (`npm test`) | 31/31 |
+| Packed tarball, GUI test | 56/56, twice in a row |
+
+### Changes in 0.1.3
+
+- **Pop out / Pop back in (browser only).** A 4th title-bar button opens the
+  session in its own browser window (conversation only, no sidebar); a placeholder
+  with **Pop back in** stays on the canvas and the popout has its own **Pop back
+  in** in the header. Hidden inside the DeepSeek desktop app.
+- **Empty states restyled** to DSH sizes: icon tile, 15px title, 13px hint, and a
+  properly aligned **New session** button (the icon no longer floats above the
+  text). The all-minimized state uses the same style.
+- Fixed in testing: the popout's hidden sidebar made the right-bar column overlay
+  the header; columns are now pinned to their own grid tracks.
+
+## Previous candidate: 0.1.2
 
 Local tests on 2026-10-17 used DSH 0.2.0-rc.2, Node 24 and real headless Google
 Chrome over CDP in a disposable `DSH_HOME` under `/tmp`, with `dsh-all-usage@1.2.0`

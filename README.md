@@ -48,6 +48,7 @@ browser-local window layout remains in `localStorage`.
 | **Desktop mode switch** | Sits directly above Settings. Off by default; the choice persists in this browser. Turning it off returns to the normal conversation on the focused window's session. |
 | **Sessions as windows** | Clicking a session in the sidebar opens it as a window. A session can only have one window — clicking it again restores and focuses the existing one. Every window shows the **same conversation UI as the main chat** — header, view tabs, transcript, composer, and anything other plugins add (for example `dsh-rewind-plugin`'s rewind button under your messages). |
 | **Window controls** | Drag the title bar to move; drag any edge or corner to resize; double-click the title to maximize/restore; minimize, maximize and close buttons. |
+| **Pop out (browser only)** | The ↗ button left of minimize opens that session in its own browser window, showing just that conversation (no sidebar). The desktop keeps a placeholder with **Pop back in**; the popout window has a **Pop back in** button in its header too. Either one closes the popout and returns the session to the canvas. Closing the popout window yourself also brings it back. The button is hidden in the DeepSeek desktop app, which is detected through the `data-platform` marker its preload sets on `<html>` (the same signal DSH's shortcut layer uses). |
 | **Snapping** | Drag a window to the left or right edge to fill that half, or to the top to maximize. |
 | **Taskbar** | New session button, one button per window (click to focus, click the focused one to minimize, a dot shows running sessions), Cascade / Tile / Side-by-side layouts, a clock, and a Show desktop strip at the far right. |
 | **Window text size** | Window contents are the stock UI scaled down uniformly (default 85%), so every element — including ones added by other plugins — shrinks together. Click the percentage in the taskbar to make it larger, right-click to make it smaller (70–100%). The normal full-width conversation is untouched. |
@@ -78,6 +79,8 @@ This is an **internal integration**, not a stable public DSH API. It plugs into:
 | `main.conversation` entry | each window renders the stock conversation entry's own component with its own render rights, captured when DSH first renders it, so every plugin contribution appears inside windows too (falls back to the `conversation.content` factory if unavailable) |
 | `dsh-desktop-ui.window` (session-scoped child slot) | one window body per session, under that session's scope |
 | `sidebar.footer.action` (order −100) | the Desktop mode switch, sorted first; the footer row is stacked vertically while it is present |
+| `conversation.header.leading` (popout pages only) | the **Pop back in** button in a popped-out window's header |
+| `BroadcastChannel('dsh-desktop-ui.v1')` | same-origin messages between the canvas and popout windows (`popped`, `pop-in-request`, `pop-in`, `closed`); session ids only |
 | `configForms` (`dsh-desktop-ui` namespace) | Host-backed `layout` field (volatile plugin config) for restart-proof restore |
 | `ctx.sessions.retain(id, { source: 'desktopWindow' })` | each window owns an independent session reference, released on close |
 | `ctx.uiWorkspace.openSession` / `startSession` | keeps the sidebar selection in sync and creates new sessions |
@@ -92,6 +95,7 @@ Known limitations:
 - The right sidebar (files, terminal, browser) still belongs to the main session, not to individual windows.
 - Window positions are stored per browser, not per account or device.
 - Window scaling uses CSS `zoom` (Chrome/Edge/Safari and Firefox 126+).
+- Popout uses `window.open`; if the browser blocks popups for the DSH page, allow them for that address. Popout URLs carry only `#dsh-desktop-ui-popout=<session id>` in the hash (never the launch token); the window authenticates with the existing DSH browser cookie. Popped-out state is not saved — after a full restart sessions come back docked on the canvas.
 - Reusing the stock conversation entry wraps it at runtime (the same technique `dsh-workspace-sorter` uses for the sidebar). It is restored when the plugin unloads.
 - The UI strings are English only.
 - Not yet tested: two tabs at once, a live model turn streaming inside a window, and coexistence with other sidebar plugins.
@@ -107,7 +111,7 @@ npm pack
 - `cordis.patch.yml` registers the package.
 - `index.mjs` declares the volatile `layout` Config field using the running harness's own schemastery; it has no other host behaviour.
 - Client inject list: `dsh-api-session-controller`, `dsh-client-ui-layout`, `dsh-client-ui-session`, `dsh-client-ui-sidebar`, `dsh-client-ui-conversation`, `dsh-client-ui-chat`, `dsh-client-ui-workspace`, `dsh-client-ui-settings`.
-- `test/state.test.mjs` covers the window manager (open/focus/minimize/maximize/close, one window per session, move never resizes, snapping, layouts, show desktop, pruning, state sanitising, text size), Host persistence (restore, seeding, debounced and serialized writes, malformed values, early local changes), footer ordering, runtime identities, and bundle freshness.
+- `test/state.test.mjs` covers the window manager (open/focus/minimize/maximize/close, one window per session, move never resizes, snapping, layouts, show desktop, pruning, state sanitising, text size), Host persistence (restore, seeding, debounced and serialized writes, malformed values, early local changes), popout detection and URLs, footer ordering, runtime identities, and bundle freshness.
 - `scripts/e2e-gui.mjs` is a dependency-free headless Chrome/CDP test against a real, isolated DSH instance. See [LOCAL-SETUP.md](./LOCAL-SETUP.md).
 
 ## Design concepts

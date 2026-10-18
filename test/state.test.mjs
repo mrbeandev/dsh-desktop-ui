@@ -359,3 +359,34 @@ test('host writes are serialized so an older layout can never land last', async 
   assert.deepEqual(JSON.parse(writes[1]).windows.map(w => w.sessionId), ['a', 'b', 'c']);
   sync.dispose();
 });
+
+test('popout is offered only in a browser, never in the desktop app', () => {
+  assert.equal(P.isBrowserRuntime({ documentElement: { dataset: {} } }), true);
+  assert.equal(P.isBrowserRuntime({ documentElement: { dataset: { platform: 'darwin' } } }), false);
+  assert.equal(P.isBrowserRuntime({ documentElement: { dataset: { platform: 'win32' } } }), false);
+});
+
+test('popout URLs carry only the session id in the hash, never the query or token', () => {
+  const url = P.popoutUrl('http://127.0.0.1:3080/?token=secret#old', 'session-abc_1');
+  assert.equal(url, 'http://127.0.0.1:3080/#dsh-desktop-ui-popout=session-abc_1');
+  assert.ok(!url.includes('token'));
+  assert.equal(P.popoutTarget(new URL(url).hash), 'session-abc_1');
+});
+
+test('popoutTarget rejects malformed or hostile hashes', () => {
+  for (const bad of ['', '#', '#other=1', '#dsh-desktop-ui-popout=', '#dsh-desktop-ui-popout=<img>', '#dsh-desktop-ui-popout=a b', '#dsh-desktop-ui-popout=' + 'x'.repeat(300), null, 42]) {
+    assert.equal(P.popoutTarget(bad), undefined, String(bad));
+  }
+});
+
+test('popped-out windows are never focused, persisted, or duplicated', () => {
+  let s = P.openWindow(P.openWindow(P.emptyState(), 'a'), 'b');
+  s = P.setPopped(s, 'b', true);
+  assert.equal(P.focusedId(s), 'a');
+  assert.equal(P.setPopped(s, 'missing', true), s);
+  const text = P.serialize(s);
+  assert.ok(!text.includes('poppedOut'));
+  assert.equal(P.sanitize(JSON.parse(text)).windows.find(w => w.sessionId === 'b').poppedOut, undefined);
+  s = P.setPopped(s, 'b', false);
+  assert.equal(s.windows.filter(w => w.sessionId === 'b').length, 1);
+});

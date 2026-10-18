@@ -14,7 +14,7 @@ movable, resizable window — with a taskbar along the bottom.
 [Features](#features) · [Compatibility](#compatibility-and-limitations) ·
 [Development](#build-and-test) · [Local setup](./LOCAL-SETUP.md) · [Release checklist](./RELEASE.md)
 
-![Desktop mode with four sessions tiled, light theme](https://raw.githubusercontent.com/mrbeandev/dsh-desktop-ui/main/assets/desktop-mode-light.png)
+![Four sessions from different workspaces tiled on the desktop](https://raw.githubusercontent.com/mrbeandev/dsh-desktop-ui/main/assets/showcase/tiled-light.webp)
 
 ## Why this plugin exists
 
@@ -65,7 +65,13 @@ contains session ids, geometry and flags only — never conversation content,
 credentials or prompts. The plugin makes no network requests of its own. To reset
 the desktop, remove the `layout` line or switch Desktop mode off and close the windows.
 
-![Desktop mode in the dark theme](https://raw.githubusercontent.com/mrbeandev/dsh-desktop-ui/main/assets/desktop-mode-dark.png)
+![Dark theme](https://raw.githubusercontent.com/mrbeandev/dsh-desktop-ui/main/assets/showcase/tiled-dark.webp)
+
+![Dragging a window to the right edge shows the snap preview](https://raw.githubusercontent.com/mrbeandev/dsh-desktop-ui/main/assets/showcase/snap-preview.webp)
+
+![A session popped out: the canvas keeps a Pop back in placeholder](https://raw.githubusercontent.com/mrbeandev/dsh-desktop-ui/main/assets/showcase/popout-canvas.webp)
+
+![The popout browser window shows just that conversation, with Pop back in in its header](https://raw.githubusercontent.com/mrbeandev/dsh-desktop-ui/main/assets/showcase/popout-window.webp)
 
 ## Compatibility and limitations
 

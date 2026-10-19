@@ -45,13 +45,21 @@ try {
   const wait = async (expression, tries = 100) => { for (let i = 0; i < tries; i++) { if (await evaluate(expression)) return true; await delay(100); } return false; };
   const center = async selector => evaluate(`(() => { const e = document.querySelector(${JSON.stringify(selector)}); if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2, w: r.width, h: r.height, left: r.x, top: r.y }; })()`);
   const mouse = (type, x, y, extra = {}) => send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, ...extra });
+  const clearDialog = async () => {
+    const c = await evaluate(`(() => { const b = [...document.querySelectorAll('button')].find(e => ['Configure later', 'Continue'].includes(e.textContent.trim()) && e.closest('[role=dialog], [role=presentation], [aria-modal=true]')); if (!b) return null; const r = b.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+    if (!c) return false;
+    await mouse('mousePressed', c.x, c.y); await mouse('mouseReleased', c.x, c.y); await delay(400);
+    return true;
+  };
   const click = async (selector, clickCount = 1) => {
+    while (await clearDialog()) { /* a first-run dialog can appear at any time in a fresh profile */ }
     const c = await center(selector);
     if (!c) throw new Error(`Missing ${selector}`);
     for (let n = 1; n <= clickCount; n++) { await mouse('mousePressed', c.x, c.y, { clickCount: n }); await mouse('mouseReleased', c.x, c.y, { clickCount: n }); }
     await delay(250);
   };
   const drag = async (fx, fy, tx, ty) => {
+    while (await clearDialog()) { /* see click() */ }
     await mouse('mouseMoved', fx, fy, { buttons: 0 });
     await mouse('mousePressed', fx, fy);
     for (let i = 1; i <= 8; i++) await mouse('mouseMoved', fx + (tx - fx) * i / 8, fy + (ty - fy) * i / 8);
@@ -75,6 +83,12 @@ try {
       quiet++;
       await delay(100);
     }
+  };
+  const closeWindow = async id => {
+    const W = `.dsh-dui-win[data-session-id="${id}"]`;
+    if (await evaluate(`document.querySelector(${JSON.stringify(W)})?.hidden === true`)) await click(`.dsh-dui-task[data-session-id="${id}"]`);
+    if (await evaluate(`!!document.querySelector(${JSON.stringify(W + ' [data-popin]')})`)) await click(`${W} [data-popin]`);
+    if (await evaluate(`!!document.querySelector(${JSON.stringify(W + ' button[aria-label^="Close"]')})`)) await click(`${W} button[aria-label^="Close"]`);
   };
   const state = () => evaluate(`JSON.parse(localStorage.getItem('dsh-desktop-ui.state.v1') || 'null')`);
   const focused = () => evaluate(`document.querySelector('.dsh-dui-win[data-focused]')?.getAttribute('data-session-id')`);
@@ -163,8 +177,16 @@ try {
     check('each window has its own composer', await evaluate(`document.querySelectorAll('.dsh-dui-win [contenteditable=true]').length === document.querySelectorAll('.dsh-dui-win').length`));
     await shot('01-cascade');
 
+    // Start every geometry test from a known layout: cascade puts the focused
+    // window near the top-left with room to move and to grow up and left.
+    await click('button[aria-label="Cascade windows"]');
     const top = await focused();
     const sel = `.dsh-dui-win[data-session-id="${top}"]`;
+    {
+      const t = await center(`${sel} .dsh-dui-title-text`);
+      const cv = await center('.dsh-dui-canvas-inner');
+      await drag(t.x, t.y, t.x + (cv.left + 200 - (await center(sel)).left), t.y + (cv.top + 140 - (await center(sel)).top));
+    }
     const b0 = await center(sel), t0 = await center(`${sel} .dsh-dui-title-text`);
     await drag(t0.x, t0.y, t0.x + 160, t0.y + 90);
     const b1 = await center(sel);
@@ -206,6 +228,38 @@ try {
     await shot('02-tiled');
     await click('button[aria-label="Show windows side by side"]');
     const cols = await evaluate(visibleBoxes);
+    // Linked split: dragging the border between two side-by-side windows resizes both.
+    // Use exactly two windows (half each) so neither starts near the minimum width.
+    {
+      const vis = await evaluate(`[...document.querySelectorAll('.dsh-dui-win')].filter(n => !n.hidden).map(n => n.getAttribute('data-session-id'))`);
+      const parked = vis.slice(2);
+      for (const id of parked) await click(`.dsh-dui-win[data-session-id="${id}"] button[aria-label^="Minimize"]`);
+      await wait(`[...document.querySelectorAll('.dsh-dui-win')].filter(n => !n.hidden).length === 2`, 30);
+      await click('button[aria-label="Show windows side by side"]');
+      await wait(`[...document.querySelectorAll('.dsh-dui-win')].filter(n => !n.hidden).every(n => n.getBoundingClientRect().width > 500)`, 30);
+      const ord = await evaluate(`[...document.querySelectorAll('.dsh-dui-win')].filter(n => !n.hidden).map(n => ({ id: n.getAttribute('data-session-id'), x: n.getBoundingClientRect().x })).sort((p, q) => p.x - q.x).map(o => o.id)`);
+      const [left, right] = ord;
+      const L = `.dsh-dui-win[data-session-id="${left}"]`, R = `.dsh-dui-win[data-session-id="${right}"]`;
+      const l0 = await center(L), r0 = await center(R);
+      const grip = await center(`${L} [data-edge=e]`);
+      // Move the border by less than the room left above the 360px minimum.
+      const step = Math.max(20, Math.min(120, Math.floor(l0.w - 370)));
+      await drag(grip.x, grip.y, grip.x - step, grip.y);
+      const l1 = await center(L), r1 = await center(R);
+      check('dragging the border between side-by-side windows resizes both together', Math.round(l0.w - l1.w) === step && Math.round(r1.w - r0.w) === step && Math.round(r1.left - r0.left) === -step, { step, dl: l1.w - l0.w, dr: r1.w - r0.w, drx: r1.left - r0.left });
+      check('the gap between linked windows stays the same', Math.round(r1.left - (l1.left + l1.w)) === Math.round(r0.left - (l0.left + l0.w)));
+      // Grab the border from the right-hand window's side of the gap.
+      const rg = await evaluate(`(() => { const g = document.querySelector(${JSON.stringify(R + ' [data-edge=w]')}).getBoundingClientRect(); const x = g.x + g.width - 2, y = g.y + g.height / 2; return { x, y, hit: document.elementFromPoint(x, y)?.closest('.dsh-dui-win')?.getAttribute('data-session-id') }; })()`);
+      await drag(rg.x, rg.y, rg.x + 60, rg.y);
+      const l2 = await center(L), r2 = await center(R);
+      check('the same border can be grabbed from the other window', Math.round(l2.w - l1.w) === 60 && Math.round(r1.w - r2.w) === 60, { dl: l2.w - l1.w, dr: r1.w - r2.w, grabbed: rg.hit === right });
+      const g2 = await center(`${L} [data-edge=e]`);
+      await drag(g2.x, g2.y, g2.x + 4000, g2.y);
+      const r3 = await center(R);
+      check('linked resizing stops at the minimum window width', Math.round(r3.w) >= 359, r3.w);
+      for (const id of parked) await click(`.dsh-dui-task[data-session-id="${id}"]`);
+      await click('button[aria-label="Show windows side by side"]');
+    }
     check('Side by side gives equal columns', noOverlap(cols) && cols.every(b => Math.abs(b[2] - cols[0][2]) < 2 && Math.abs(b[1] - cols[0][1]) < 2), cols.map(b => b.map(Math.round)));
     await click('button[aria-label="Cascade windows"]');
     check('Cascade restores overlapping stack', !noOverlap(await evaluate(visibleBoxes)));
@@ -253,7 +307,7 @@ try {
 
     const before = (await state()).windows.length;
     const last = await focused();
-    await click(`.dsh-dui-win[data-session-id="${last}"] button[aria-label^="Close"]`);
+    await closeWindow(last);
     check('close removes window and taskbar entry', (await state()).windows.length === before - 1 && !(await evaluate(`!!document.querySelector('.dsh-dui-task[data-session-id="${last}"]')`)));
     check('closing a window keeps the session in the sidebar', await evaluate(`!!document.querySelector('[data-row-key="session:${last}"]')`));
 
@@ -307,7 +361,7 @@ try {
     for (let pass = 0; pass < 3; pass++) {
       const open = await evaluate(`[...document.querySelectorAll('.dsh-dui-win')].map(n => n.getAttribute('data-session-id'))`);
       if (!open.length) break;
-      for (const id of open) await click(`.dsh-dui-win[data-session-id="${id}"] button[aria-label^="Close"]`);
+      for (const id of open) await closeWindow(id);
       await delay(500);
     }
     check('empty desktop shows guidance', await wait(`/No windows open/.test(document.querySelector('[data-dsh-desktop-ui]').innerText)`, 20), await evaluate(`[...document.querySelectorAll('.dsh-dui-win')].map(n => n.getAttribute('data-session-id'))`));

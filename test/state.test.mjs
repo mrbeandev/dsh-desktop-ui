@@ -390,3 +390,78 @@ test('popped-out windows are never focused, persisted, or duplicated', () => {
   s = P.setPopped(s, 'b', false);
   assert.equal(s.windows.filter(w => w.sessionId === 'b').length, 1);
 });
+
+const rectMap = obj => new Map(Object.entries(obj));
+
+test('dragging the border between two side-by-side windows resizes both', () => {
+  // Two halves with the 8px tiling gap.
+  const rects = rectMap({ a: { x: 8, y: 8, w: 788, h: 900 }, b: { x: 804, y: 8, w: 788, h: 900 } });
+  const links = P.linkedNeighbours(rects, 'a', 'e');
+  assert.deepEqual(links.opposite, ['b']);
+  const out = P.moveSharedEdge(rects, 'a', 'e', 120, links);
+  assert.deepEqual(out.get('a'), { x: 8, y: 8, w: 908, h: 900 });
+  assert.deepEqual(out.get('b'), { x: 924, y: 8, w: 668, h: 900 });
+  // The gap is preserved and the outer edges stay put.
+  assert.equal(out.get('b').x - (out.get('a').x + out.get('a').w), 8);
+  assert.equal(out.get('b').x + out.get('b').w, 1592);
+  // Grabbing the same border from the other window does the same thing.
+  const fromB = P.moveSharedEdge(rects, 'b', 'w', 120, P.linkedNeighbours(rects, 'b', 'w'));
+  assert.deepEqual(fromB.get('a'), out.get('a'));
+  assert.deepEqual(fromB.get('b'), out.get('b'));
+});
+
+test('dragging the border between stacked windows resizes both (top/bottom)', () => {
+  const rects = rectMap({ top: { x: 8, y: 8, w: 1000, h: 446 }, bottom: { x: 8, y: 462, w: 1000, h: 446 } });
+  const links = P.linkedNeighbours(rects, 'top', 's');
+  assert.deepEqual(links.opposite, ['bottom']);
+  const out = P.moveSharedEdge(rects, 'top', 's', -100, links);
+  assert.deepEqual(out.get('top'), { x: 8, y: 8, w: 1000, h: 346 });
+  assert.deepEqual(out.get('bottom'), { x: 8, y: 362, w: 1000, h: 546 });
+});
+
+test('a 2x2 grid moves the whole vertical split, including the window stacked alongside', () => {
+  const rects = rectMap({
+    tl: { x: 8, y: 8, w: 788, h: 446 }, tr: { x: 804, y: 8, w: 788, h: 446 },
+    bl: { x: 8, y: 462, w: 788, h: 446 }, br: { x: 804, y: 462, w: 788, h: 446 },
+  });
+  const links = P.linkedNeighbours(rects, 'tl', 'e');
+  assert.deepEqual(links.opposite.sort(), ['br', 'tr']);
+  assert.deepEqual(links.same, ['bl']);
+  const out = P.moveSharedEdge(rects, 'tl', 'e', 50, links);
+  // The horizontal split in the same grid links all four windows the other way.
+  const hz = P.linkedNeighbours(rects, 'tl', 's');
+  assert.deepEqual(hz.opposite.sort(), ['bl', 'br']);
+  assert.deepEqual(hz.same, ['tr']);
+  assert.equal(out.get('tl').w, 838); assert.equal(out.get('bl').w, 838);
+  assert.equal(out.get('tr').x, 854); assert.equal(out.get('br').x, 854);
+});
+
+test('linked resizing stops at the minimum window size instead of overlapping', () => {
+  const rects = rectMap({ a: { x: 8, y: 8, w: 788, h: 900 }, b: { x: 804, y: 8, w: 788, h: 900 } });
+  const links = P.linkedNeighbours(rects, 'a', 'e');
+  const out = P.moveSharedEdge(rects, 'a', 'e', 5000, links);
+  assert.equal(out.get('b').w, 360);
+  assert.equal(out.get('a').w, 788 + 788 - 360);
+  const back = P.moveSharedEdge(rects, 'a', 'e', -5000, links);
+  assert.equal(back.get('a').w, 360);
+});
+
+test('windows that do not touch (or only touch at a corner) are not linked', () => {
+  const far = rectMap({ a: { x: 0, y: 0, w: 500, h: 500 }, b: { x: 700, y: 0, w: 500, h: 500 } });
+  assert.deepEqual(P.linkedNeighbours(far, 'a', 'e'), { opposite: [], same: [] });
+  const corner = rectMap({ a: { x: 0, y: 0, w: 500, h: 500 }, b: { x: 508, y: 510, w: 500, h: 500 } });
+  assert.deepEqual(P.linkedNeighbours(corner, 'a', 'e').opposite, []);
+  // Corner grips (ne, sw...) never link.
+  assert.deepEqual(P.linkedNeighbours(far, 'a', 'ne'), { opposite: [], same: [] });
+});
+
+test('an unrelated window elsewhere on the desktop is never pulled into a split', () => {
+  const rects = rectMap({
+    a: { x: 8, y: 8, w: 600, h: 400 }, b: { x: 616, y: 8, w: 600, h: 400 },
+    loner: { x: 300, y: 600, w: 400, h: 300 },
+  });
+  const links = P.linkedNeighbours(rects, 'a', 'e');
+  assert.deepEqual(links, { opposite: ['b'], same: [] });
+  const out = P.moveSharedEdge(rects, 'a', 'e', 40, links);
+  assert.equal(out.has('loner'), false);
+});

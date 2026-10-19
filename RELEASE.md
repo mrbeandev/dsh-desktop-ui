@@ -1,6 +1,29 @@
 # Release checklist
 
-## Current candidate: 0.1.3 (not yet published)
+## Current candidate: 0.1.4 (not yet published)
+
+Tested 2026-10-19 on DSH 0.2.0-rc.2 in a fresh disposable `DSH_HOME` under `/tmp`
+with `dsh-all-usage@1.2.0` and `dsh-rewind-plugin@0.15.0-beta.1`, real headless
+Chrome over CDP, no model calls.
+
+| Check | Result |
+|---|---|
+| Unit tests (`npm test`) | 37/37 |
+| Packed tarball, GUI test | 60/60, twice in a row |
+
+### Changes in 0.1.4
+
+- **Linked borders.** Dragging the border between windows that touch (side by
+  side or stacked) resizes them together, like a splitter: one grows as the
+  other shrinks, the gap is kept, and in a grid the whole straight split moves.
+  Clamped at the minimum window size. Corner grips and non-touching windows are
+  unchanged.
+- Edge grips now reach 5px outside each window, so the 8px gap between tiled
+  windows is always grabbable.
+- A drag now also applies the final pointer position on release, so fast drags
+  don't stop short.
+
+## Previous candidate: 0.1.3
 
 Tested 2026-10-18 on DSH 0.2.0-rc.2 in a fresh disposable `DSH_HOME` under `/tmp`
 with `dsh-all-usage@1.2.0` and `dsh-rewind-plugin@0.15.0-beta.1` installed alongside,

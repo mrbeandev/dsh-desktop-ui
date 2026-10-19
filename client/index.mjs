@@ -272,6 +272,109 @@ export function createClientPlugin(require) {
     return { ...state, zoom: next };
   }
 
+  /* ---------- linked edges (pure) ---------- */
+
+  const LINK_TOLERANCE = 14; // px between two edges that count as "touching" (tiled gap is 8px)
+  const OPPOSITE = { e: 'w', w: 'e', n: 's', s: 'n' };
+
+  /** Position of one side of a rect along its axis. */
+  function sideOf(r, side) {
+    return side === 'e' ? r.x + r.w : side === 'w' ? r.x : side === 's' ? r.y + r.h : r.y;
+  }
+
+  /** Whether two rects overlap along the axis perpendicular to `side` (enough to share a border). */
+  function overlapsAlong(a, b, side) {
+    const horizontalEdge = side === 'n' || side === 's';
+    const a0 = horizontalEdge ? a.x : a.y, a1 = a0 + (horizontalEdge ? a.w : a.h);
+    const b0 = horizontalEdge ? b.x : b.y, b1 = b0 + (horizontalEdge ? b.w : b.h);
+    return Math.min(a1, b1) - Math.max(a0, b0) > 24;
+  }
+
+  /** Whether two rects sit end-to-end along the split line (e.g. stacked with the 8px gap). */
+  function adjacentAlong(a, b, side, tolerance = LINK_TOLERANCE) {
+    const horizontalEdge = side === 'n' || side === 's';
+    const a0 = horizontalEdge ? a.x : a.y, a1 = a0 + (horizontalEdge ? a.w : a.h);
+    const b0 = horizontalEdge ? b.x : b.y, b1 = b0 + (horizontalEdge ? b.w : b.h);
+    return Math.abs(a1 - b0) <= tolerance || Math.abs(b1 - a0) <= tolerance;
+  }
+
+  /**
+   * Windows that share a border with `side` of the dragged window, grouped by
+   * which side of theirs moves:
+   *  - `opposite`: neighbours across the border (their facing side moves the other way round,
+   *    e.g. dragging A's east edge moves B's west edge), and
+   *  - `same`: windows stacked alongside A whose same side lines up with A's
+   *    (e.g. two windows on the left of a vertical split both move their east edge).
+   * Uses pixel rects; `rects` maps id -> {x,y,w,h}.
+   */
+  function linkedNeighbours(rects, id, side, tolerance = LINK_TOLERANCE) {
+    const me = rects.get(id);
+    if (!me || !OPPOSITE[side]) return { opposite: [], same: [] };
+    const opp = OPPOSITE[side];
+    // Grow the split outward: every window whose `side` lies on the line joins
+    // the moving group, every window whose opposite side faces that line joins
+    // the shrinking group, as long as each new member borders a member of the
+    // other group (so the whole straight split moves, as in a 2x2 grid).
+    const line = sideOf(me, side);
+    const same = new Set([id]), opposite = new Set();
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const [other, r] of rects) {
+        if (same.has(other) || opposite.has(other)) continue;
+        const onFar = Math.abs(sideOf(r, opp) - line) <= tolerance;
+        const onNear = Math.abs(sideOf(r, side) - line) <= 2;
+        // A window on the line joins if it continues the split: it borders a
+        // window across the line, or it is adjacent (end-to-end) to a window on
+        // its own side of the line that is already part of the split.
+        const touches = (set, across) => [...set].some(k => across
+          ? overlapsAlong(rects.get(k), r, side)
+          : adjacentAlong(rects.get(k), r, side));
+        if (onFar && (touches(same, true) || touches(opposite, false))) { opposite.add(other); grew = true; }
+        else if (onNear && (touches(opposite, true) || touches(same, false))) { same.add(other); grew = true; }
+      }
+    }
+    same.delete(id);
+    return opposite.size ? { opposite: [...opposite], same: [...same] } : { opposite: [], same: [] };
+  }
+
+  /**
+   * Move one shared border by `delta` px (positive = east/south) and return new
+   * pixel rects for every affected window. Clamps the delta so no window drops
+   * below its minimum size, so the split never overlaps or inverts.
+   */
+  function moveSharedEdge(rects, id, side, delta, links, minW = MIN_W, minH = MIN_H) {
+    const horizontal = side === 'e' || side === 'w';
+    const min = horizontal ? minW : minH;
+    const size = r => (horizontal ? r.w : r.h);
+    // Windows whose `side` moves (me + same) and windows whose opposite side moves.
+    const growers = [id, ...links.same];
+    const shrinkers = links.opposite;
+    // For side e/s: growers' far edge moves by +delta; shrinkers' near edge moves by +delta.
+    // For side w/n: growers' near edge moves by +delta; shrinkers' far edge moves by +delta.
+    const forward = side === 'e' || side === 's';
+    let lo = -Infinity, hi = Infinity;
+    for (const g of growers) {
+      const r = rects.get(g);
+      if (forward) lo = Math.max(lo, min - size(r)); else hi = Math.min(hi, size(r) - min);
+    }
+    for (const n of shrinkers) {
+      const r = rects.get(n);
+      if (forward) hi = Math.min(hi, size(r) - min); else lo = Math.max(lo, min - size(r));
+    }
+    const d = Math.min(hi, Math.max(lo, delta));
+    const out = new Map();
+    const apply = (key, moveNear, moveFar) => {
+      const r = { ...rects.get(key) };
+      if (horizontal) { if (moveNear) { r.x += d; r.w -= d; } if (moveFar) r.w += d; }
+      else { if (moveNear) { r.y += d; r.h -= d; } if (moveFar) r.h += d; }
+      out.set(key, r);
+    };
+    for (const g of growers) apply(g, !forward, forward);
+    for (const n of shrinkers) apply(n, forward, !forward);
+    return out;
+  }
+
   /** Remove windows whose session no longer exists in the host catalog. */
   function pruneMissing(state, knownIds) {
     const next = state.windows.filter(w => knownIds.has(w.sessionId));
@@ -438,11 +541,11 @@ export function createClientPlugin(require) {
 .dsh-dui-popped{margin:auto;display:flex;flex-direction:column;align-items:center;text-align:center;padding:24px}
 .dsh-dui-task-pop{display:inline-flex;margin-left:2px;color:var(--dsw-alias-label-tertiary)}
 .dsh-dui-btn:focus-visible{outline:2px solid var(--dsw-alias-label-primary);outline-offset:2px}
-.dsh-dui-win{position:absolute;display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--dsw-alias-bg-base);border:.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-md,10px);box-shadow:var(--dsw-elevation-panel,0 8px 28px rgba(0,0,0,.12));overflow:hidden}
+.dsh-dui-win{position:absolute;display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--dsw-alias-bg-base);border:.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-md,10px);box-shadow:var(--dsw-elevation-panel,0 8px 28px rgba(0,0,0,.12));overflow:visible}
 .dsh-dui-win[data-focused]{border-color:var(--dsw-alias-border-l3);box-shadow:var(--dsw-elevation-prominent,0 16px 48px rgba(0,0,0,.18))}
 .dsh-dui-win[data-maximized]{border-radius:0;border-width:0;box-shadow:none}
 .dsh-dui-win[hidden]{display:none}
-.dsh-dui-title{flex:none;display:flex;align-items:center;height:32px;padding-left:12px;gap:8px;border-bottom:.5px solid var(--dsw-alias-border-l2);user-select:none;touch-action:none;cursor:default;background:var(--dsw-alias-bg-base)}
+.dsh-dui-title{flex:none;display:flex;align-items:center;height:32px;padding-left:12px;gap:8px;border-bottom:.5px solid var(--dsw-alias-border-l2);user-select:none;touch-action:none;cursor:default;background:var(--dsw-alias-bg-base);border-radius:var(--dsw-radius-md,10px) var(--dsw-radius-md,10px) 0 0}
 .dsh-dui-win:not([data-focused]) .dsh-dui-title{color:var(--dsw-alias-label-tertiary)}
 .dsh-dui-title-text{flex:1;min-width:0;font-size:12px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dsh-dui-dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-label-tertiary);opacity:.5}
@@ -452,7 +555,8 @@ export function createClientPlugin(require) {
 .dsh-dui-ctl button{width:40px;height:100%;border:0;background:none;cursor:pointer;display:grid;place-items:center;color:var(--dsw-alias-label-secondary)}
 .dsh-dui-ctl button:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .dsh-dui-ctl button[data-close]:hover{background:var(--dsw-alias-state-error-primary,#c42b1c);color:#fff}
-.dsh-dui-body{position:relative;flex:1;min-height:0;min-width:0;display:flex;overflow:hidden}
+.dsh-dui-body{position:relative;flex:1;min-height:0;min-width:0;display:flex;overflow:hidden;border-radius:0 0 var(--dsw-radius-md,10px) var(--dsw-radius-md,10px)}
+.dsh-dui-win[data-maximized] .dsh-dui-body,.dsh-dui-win[data-maximized] .dsh-dui-title{border-radius:0}
 .dsh-dui-body>*{flex:1;min-width:0;min-height:0}
 /* Window body: the stock conversation UI, unchanged, at a uniform scale.
    One CSS zoom shrinks everything proportionally — text, buttons, pickers and
@@ -469,10 +573,12 @@ export function createClientPlugin(require) {
 .dsh-dui-scale{min-width:46px;font-variant-numeric:tabular-nums}
 .dsh-dui-note{margin:auto;padding:20px;font-size:13px;color:var(--dsw-alias-label-tertiary);text-align:center}
 .dsh-dui-edge{position:absolute;z-index:3}
-.dsh-dui-edge[data-edge=n]{top:-3px;left:8px;right:8px;height:6px;cursor:ns-resize}
-.dsh-dui-edge[data-edge=s]{bottom:-3px;left:8px;right:8px;height:6px;cursor:ns-resize}
-.dsh-dui-edge[data-edge=e]{right:-3px;top:8px;bottom:8px;width:6px;cursor:ew-resize}
-.dsh-dui-edge[data-edge=w]{left:-3px;top:8px;bottom:8px;width:6px;cursor:ew-resize}
+.dsh-dui-edge[data-edge=n]{top:-5px;left:8px;right:8px;height:9px;cursor:ns-resize}
+.dsh-dui-edge[data-edge=s]{bottom:-5px;left:8px;right:8px;height:9px;cursor:ns-resize}
+/* Edge grips reach 5px outside the window, so the 8px gap between two tiled
+   windows is fully covered by one grip or the other. */
+.dsh-dui-edge[data-edge=e]{right:-5px;top:8px;bottom:8px;width:9px;cursor:ew-resize}
+.dsh-dui-edge[data-edge=w]{left:-5px;top:8px;bottom:8px;width:9px;cursor:ew-resize}
 .dsh-dui-edge[data-edge=ne]{right:-3px;top:-3px;width:12px;height:12px;cursor:nesw-resize}
 .dsh-dui-edge[data-edge=nw]{left:-3px;top:-3px;width:12px;height:12px;cursor:nwse-resize}
 .dsh-dui-edge[data-edge=se]{right:-3px;bottom:-3px;width:12px;height:12px;cursor:nwse-resize}
@@ -820,6 +926,7 @@ export function createClientPlugin(require) {
       minimize: id => update(s => minimizeWindow(s, id)),
       toggleMax: id => update(s => toggleMaximize(s, id)),
       geometry: (id, g) => update(s => setGeometry(s, id, g)),
+      geometries: list => update(s => list.reduce((acc, [id, g]) => setGeometry(acc, id, g), s)),
       snap: (id, kind, size) => update(s => snapWindow(s, id, kind, size)),
       arrange: (kind, size) => update(s => arrange(s, kind, size)),
       showDesktop: () => update(s => toggleShowDesktop(s)),
@@ -924,7 +1031,7 @@ export function createClientPlugin(require) {
     ctx.effect(() => ctx.slots.subscribe('main.conversation', captureStockConversation), 'dsh-desktop-ui: capture conversation entry');
     captureStockConversation();
 
-    function Window({ win, focused, narrow, size, canvasRef, onSnapPreview, renderSlot, SessionProvider, useSessions, useSessionStatus }) {
+    function Window({ win, focused, narrow, size, canvasRef, onSnapPreview, liveOverride, setLinkedLive, allWindows, renderSlot, SessionProvider, useSessions, useSessionStatus }) {
       const { sessionId } = win;
       const title = useSessions(state => sessionTitle(state.byId[sessionId], sessionId));
       const statusRunning = useSessionStatus(map => map.get(sessionId)?.running);
@@ -935,7 +1042,7 @@ export function createClientPlugin(require) {
       const [dragging, setDragging] = useState(false);
       const maximized = win.maximized || narrow;
 
-      const px = live ?? {
+      const px = live ?? liveOverride ?? {
         x: win.x * size.width, y: win.y * size.height, w: win.w * size.width, h: win.h * size.height,
       };
       // Minimum sizes apply to user resizing only; arranged layouts may be
@@ -968,6 +1075,18 @@ export function createClientPlugin(require) {
         let snap = null;
         let current = start;
         let engaged = false;
+        // Linked split: a straight edge (e/w/n/s) that touches neighbouring windows
+        // moves the shared border for all of them at once, like a splitter.
+        let links = null, rects = null, linked = null;
+        if (OPPOSITE[edge]) {
+          rects = new Map();
+          for (const w of allWindows) {
+            if (w.minimized || w.poppedOut) continue;
+            rects.set(w.sessionId, w.sessionId === sessionId && !win.maximized ? { ...start } : { x: w.x * W, y: w.y * H, w: w.w * W, h: w.h * H });
+          }
+          const found = linkedNeighbours(rects, sessionId, edge);
+          if (found.opposite.length) links = found;
+        }
         const move = ev => {
           const dx = ev.clientX - sx, dy = ev.clientY - sy;
           // Engage only after real movement so clicks and double-clicks pass through.
@@ -975,6 +1094,14 @@ export function createClientPlugin(require) {
             if (Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
             engaged = true;
             setDragging(true);
+          }
+          if (links) {
+            const delta = edge === 'e' || edge === 'w' ? dx : dy;
+            linked = moveSharedEdge(rects, sessionId, edge, delta, links);
+            current = linked.get(sessionId);
+            setLive(current);
+            setLinkedLive(new Map([...linked].filter(([id]) => id !== sessionId)));
+            return;
           }
           current = dragRect(start, edge, dx, dy);
           setLive(current);
@@ -984,7 +1111,9 @@ export function createClientPlugin(require) {
             onSnapPreview(snap);
           }
         };
-        const end = () => {
+        const end = ev => {
+          // Apply the release position too, so a fast drag never stops short.
+          if (ev && typeof ev.clientX === 'number') move(ev);
           window.removeEventListener('pointermove', move);
           window.removeEventListener('pointerup', end);
           window.removeEventListener('pointercancel', end);
@@ -992,13 +1121,15 @@ export function createClientPlugin(require) {
           setDragging(false);
           onSnapPreview(null);
           if (snap) actions.snap(sessionId, snap, { width: W, height: H });
+          else if (linked) actions.geometries([...linked].map(([id, r]) => [id, { x: r.x / W, y: r.y / H, w: r.w / W, h: r.h / H }]));
           else if (current !== start) actions.geometry(sessionId, { x: current.x / W, y: current.y / H, w: current.w / W, h: current.h / H });
           setLive(null);
+          setLinkedLive(null);
         };
         window.addEventListener('pointermove', move);
         window.addEventListener('pointerup', end);
         window.addEventListener('pointercancel', end);
-      }, [narrow, sessionId, left, top, width, height, win.maximized, win.w, win.h, canvasRef, onSnapPreview]);
+      }, [narrow, sessionId, left, top, width, height, win.maximized, win.w, win.h, canvasRef, onSnapPreview, allWindows, setLinkedLive]);
 
       const titleBar = h('div', {
         className: 'dsh-dui-title',
@@ -1074,6 +1205,7 @@ export function createClientPlugin(require) {
       const canvasRef = useRef(null);
       const [size, setSize] = useState({ width: 1000, height: 700 });
       const [snap, setSnap] = useState(null);
+      const [linkedLive, setLinkedLive] = useState(null);
 
       useEffect(() => {
         const node = canvasRef.current;
@@ -1105,7 +1237,8 @@ export function createClientPlugin(require) {
                 h('p', { className: 'dsh-dui-empty-text' }, 'Select one in the taskbar to bring it back.')) : null,
             windows.map(win => h(Window, {
               key: win.sessionId, win, focused: win.sessionId === focus, narrow: narrow && win.sessionId === focus ? true : narrow,
-              size, canvasRef, onSnapPreview: setSnap, renderSlot, SessionProvider, useSessions, useSessionStatus,
+              size, canvasRef, onSnapPreview: setSnap, liveOverride: linkedLive?.get(win.sessionId) ?? null, setLinkedLive, allWindows: windows,
+              renderSlot, SessionProvider, useSessions, useSessionStatus,
             })),
             snapStyle ? h('div', { className: 'dsh-dui-snap', style: snapStyle }) : null)),
         h('nav', { className: 'dsh-dui-taskbar', 'aria-label': 'Taskbar' },
@@ -1176,7 +1309,7 @@ export function createClientPlugin(require) {
     apply,
     // Pure helpers for tests.
     sanitize, serialize, parseLayout, createStore, createHostSync, findEntryNamespace, uniqueWindows, openWindow, closeWindow, focusWindow, minimizeWindow, toggleMaximize,
-    setGeometry, snapWindow, snapGeometry, arrange, dragRect, arrangeGeometry, toggleShowDesktop, cycleZoom, isBrowserRuntime, popoutTarget, popoutUrl, setPopped, pruneMissing, focusedId, emptyState,
+    setGeometry, snapWindow, snapGeometry, arrange, dragRect, arrangeGeometry, linkedNeighbours, moveSharedEdge, toggleShowDesktop, cycleZoom, isBrowserRuntime, popoutTarget, popoutUrl, setPopped, pruneMissing, focusedId, emptyState,
     constants: { PANEL, WINDOW_SLOT, TOGGLE_ID, TOGGLE_ORDER, STORAGE_KEY, MAX_WINDOWS, ZOOM_STEPS, DEFAULT_ZOOM },
   };
 }

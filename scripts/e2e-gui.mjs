@@ -90,6 +90,19 @@ try {
     if (await evaluate(`!!document.querySelector(${JSON.stringify(W + ' [data-popin]')})`)) await click(`${W} [data-popin]`);
     if (await evaluate(`!!document.querySelector(${JSON.stringify(W + ' button[aria-label^="Close"]')})`)) await click(`${W} button[aria-label^="Close"]`);
   };
+  const openPluginPage = async () => {
+    await click(`button[aria-label="Plugins"]`).catch(() => {});
+    if (!(await evaluate(`[...document.querySelectorAll('button')].some(b => b.textContent.trim().startsWith('dsh-desktop-ui') && b.getBoundingClientRect().height > 0)`))) {
+      const btn = await evaluate(`(() => { const b = [...document.querySelectorAll('button')].find(e => e.textContent.trim() === 'Plugins'); if (!b) return null; const r = b.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+      if (btn) { await mouse('mousePressed', btn.x, btn.y); await mouse('mouseReleased', btn.x, btn.y); }
+    }
+    await wait(`[...document.querySelectorAll('button')].some(b => b.textContent.trim().startsWith('dsh-desktop-ui') && b.getBoundingClientRect().height > 0)`, 40);
+    await evaluate(`[...document.querySelectorAll('button')].find(b => b.textContent.trim().startsWith('dsh-desktop-ui') && b.getBoundingClientRect().height > 0)?.scrollIntoView({ block: 'center' })`);
+    await delay(300);
+    const card = await evaluate(`(() => { const b = [...document.querySelectorAll('button')].find(e => e.textContent.trim().startsWith('dsh-desktop-ui') && e.getBoundingClientRect().height > 0); if (!b) return null; const r = b.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+    if (card) { await mouse('mousePressed', card.x, card.y); await mouse('mouseReleased', card.x, card.y); }
+    return wait(`!!document.querySelector('[data-dsh-desktop-ui-hover-toggle]')`, 40);
+  };
   const state = () => evaluate(`JSON.parse(localStorage.getItem('dsh-desktop-ui.state.v1') || 'null')`);
   const focused = () => evaluate(`document.querySelector('.dsh-dui-win[data-focused]')?.getAttribute('data-session-id')`);
   const visibleBoxes = `[...document.querySelectorAll('.dsh-dui-win')].filter(n => !n.hidden).map(n => { const r = n.getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; })`;
@@ -274,6 +287,45 @@ try {
     check('Show desktop hides all windows', (await evaluate(visibleBoxes)).length === 0);
     await click('button[aria-label="Show desktop"]');
     check('Show desktop again restores them', (await evaluate(visibleBoxes)).length >= 3);
+
+    // ---- Sidebar hover highlight ----
+    {
+      const hovered = await focused();
+      const wkey = await evaluate(`[...document.querySelectorAll('[role=treeitem]')].map(e => e.getAttribute('data-row-key')).find(k => /^workspace:./.test(k ?? ''))`);
+      // Collapse the workspace through its own folder control so the row is hidden.
+      if (await evaluate(`document.querySelector('[data-row-key="${wkey}"]')?.getAttribute('aria-expanded') === 'true'`)) await click(`[data-row-key="${wkey}"] [class*="_folder"]`);
+      check('hover test starts with the workspace collapsed', await wait(`document.querySelector('[data-row-key="${wkey}"]')?.getAttribute('aria-expanded') === 'false'`, 20));
+      const hw = await center(`.dsh-dui-win[data-session-id="${hovered}"] .dsh-dui-title-text`);
+      await mouse('mouseMoved', hw.x, hw.y, { buttons: 0 });
+      check('hovering a window expands its collapsed workspace', await wait(`document.querySelector('[data-row-key="${wkey}"]')?.getAttribute('aria-expanded') === 'true'`, 30));
+      check('hovering a window highlights its session and workspace in the sidebar', await wait(`!!document.querySelector('[data-row-key="session:${hovered}"][data-dsh-desktop-ui-hover]') && !!document.querySelector('[data-row-key="${wkey}"][data-dsh-desktop-ui-hover]')`, 30));
+      const tb = await center('.dsh-dui-taskbar');
+      await mouse('mouseMoved', tb.x, tb.y, { buttons: 0 });
+      check('moving off the windows clears the highlight and re-collapses the workspace', await wait(`!document.querySelector('[data-dsh-desktop-ui-hover]') && document.querySelector('[data-row-key="${wkey}"]')?.getAttribute('aria-expanded') === 'false'`, 30));
+      // Opt out in Plugins -> dsh-desktop-ui.
+      await openPluginPage();
+      check('Plugins page shows the hover opt-out switch', await wait(`!!document.querySelector('[data-dsh-desktop-ui-hover-toggle]')`, 40));
+      await click('[data-dsh-desktop-ui-hover-toggle]');
+      check('opt-out switch turns the feature off', await wait(`document.querySelector('[data-dsh-desktop-ui-hover-toggle]')?.getAttribute('aria-checked') === 'false'`, 20));
+      // Back to the desktop and hover again: nothing happens.
+      await click('[data-dsh-desktop-ui-toggle]'); await delay(300);
+      if (!(await evaluate(`!!document.querySelector('[data-dsh-desktop-ui]')`))) await click('[data-dsh-desktop-ui-toggle]');
+      await wait(`!!document.querySelector('.dsh-dui-win[data-session-id="${hovered}"]')`, 30);
+      if (await evaluate(`document.querySelector('[data-row-key="${wkey}"]')?.getAttribute('aria-expanded') === 'true'`)) await click(`[data-row-key="${wkey}"] [class*="_folder"]`);
+      const hw2 = await center(`.dsh-dui-win[data-session-id="${hovered}"] .dsh-dui-title-text`);
+      await mouse('mouseMoved', hw2.x, hw2.y, { buttons: 0 });
+      await delay(700);
+      check('with the opt-out, hovering does nothing to the sidebar', await evaluate(`!document.querySelector('[data-dsh-desktop-ui-hover]') && document.querySelector('[data-row-key="${wkey}"]')?.getAttribute('aria-expanded') === 'false'`));
+      // Restore the default for later runs.
+      await openPluginPage();
+      await click('[data-dsh-desktop-ui-hover-toggle]');
+      await click('[data-dsh-desktop-ui-toggle]'); await delay(300);
+      if (!(await evaluate(`!!document.querySelector('[data-dsh-desktop-ui]')`))) await click('[data-dsh-desktop-ui-toggle]');
+      await wait(`!!document.querySelector('.dsh-dui-win[data-session-id="${hovered}"]')`, 30);
+      const keep = await center(`.dsh-dui-win[data-session-id="${hovered}"] .dsh-dui-title-text`);
+      await mouse('mouseMoved', keep.x, keep.y, { buttons: 0 }); await delay(400);
+      await mouse('mouseMoved', tb.x, tb.y, { buttons: 0 }); await delay(500);
+    }
 
     // ---- Popout (browser only) ----
     const popId = await focused();

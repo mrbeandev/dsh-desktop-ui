@@ -1,6 +1,26 @@
 # Release checklist
 
-## Current candidate: 0.1.5 (not yet published)
+## Current candidate: 0.1.6 (not yet published)
+
+Tested 2026-10-19 on DSH 0.2.0-rc.2 in a disposable `DSH_HOME` with
+`dsh-all-usage@1.2.0` and `dsh-rewind-plugin@0.15.0-beta.1`, real headless Chrome
+over CDP, no model calls.
+
+| Check | Result |
+|---|---|
+| Unit tests (`npm test`) | 39/39 |
+| Packed tarball, GUI test | 68/68, twice in a row |
+
+### Changes in 0.1.6
+
+- **Sidebar hover highlight.** Hovering a window highlights its session and
+  workspace rows in the sidebar; a collapsed workspace opens while hovering and
+  closes again afterwards (a sidebar click keeps it open).
+- **Settings page.** Plugins → dsh-desktop-ui shows "Highlight the sidebar on
+  hover" (on by default). The choice is saved with the layout.
+- Includes 0.1.4 (linked borders) and 0.1.5 (workspace | session titles).
+
+## Previous candidate: 0.1.5
 
 Tested 2026-10-19 on DSH 0.2.0-rc.2 in a fresh disposable `DSH_HOME` with
 `dsh-all-usage@1.2.0` and `dsh-rewind-plugin@0.15.0-beta.1`, real headless Chrome

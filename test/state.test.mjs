@@ -480,3 +480,12 @@ test('window titles read "workspace | session"', () => {
   assert.equal(P.windowLabel('acme-web', 'Fix flaky checkout test'), 'acme-web | Fix flaky checkout test');
   assert.equal(P.windowLabel(undefined, 'Fix flaky checkout test'), 'Fix flaky checkout test');
 });
+
+test('sidebar hover highlight is on by default and its opt-out persists', () => {
+  assert.equal(P.emptyState().hoverSidebar, true);
+  assert.equal(P.sanitize({}).hoverSidebar, true);
+  assert.equal(P.sanitize({ hoverSidebar: 'no' }).hoverSidebar, true);
+  assert.equal(P.sanitize({ hoverSidebar: false }).hoverSidebar, false);
+  const off = P.sanitize(JSON.parse(P.serialize({ ...P.emptyState(), hoverSidebar: false })));
+  assert.equal(off.hoverSidebar, false);
+});

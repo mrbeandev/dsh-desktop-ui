@@ -48,6 +48,7 @@ browser-local window layout remains in `localStorage`.
 | **Desktop mode switch** | Sits directly above Settings. Off by default; the choice persists in this browser. Turning it off returns to the normal conversation on the focused window's session. |
 | **Sessions as windows** | Clicking a session in the sidebar opens it as a window. A session can only have one window — clicking it again restores and focuses the existing one. Every window shows the **same conversation UI as the main chat** — header, view tabs, transcript, composer, and anything other plugins add (for example `dsh-rewind-plugin`'s rewind button under your messages). |
 | **Window titles** | Every title bar reads `workspace | session` (for example `acme-web | Fix flaky checkout test`), with the workspace name in a quieter colour. Ungrouped sessions show just the session title. The full label is also the window's tooltip and accessible name. |
+| **Find it in the sidebar** | Hovering a window highlights its session and its workspace in the sidebar. If that workspace is collapsed, it opens while you hover and closes again when you move away (unless you clicked in the sidebar meanwhile). Turn this off in **Plugins → dsh-desktop-ui → Highlight the sidebar on hover**; the choice is saved with the layout. |
 | **Window controls** | Drag the title bar to move; drag any edge or corner to resize; double-click the title to maximize/restore; minimize, maximize and close buttons. |
 | **Pop out (browser only)** | The ↗ button left of minimize opens that session in its own browser window, showing just that conversation (no sidebar). The desktop keeps a placeholder with **Pop back in**; the popout window has a **Pop back in** button in its header too. Either one closes the popout and returns the session to the canvas. Closing the popout window yourself also brings it back. The button is hidden in the DeepSeek desktop app, which is detected through the `data-platform` marker its preload sets on `<html>` (the same signal DSH's shortcut layer uses). |
 | **Linked borders** | When windows sit side by side or stacked (for example after Tile or Side by side, or a left/right snap), dragging the border between them resizes all of them at once: as one grows, its neighbour shrinks, and the gap stays the same. In a grid the whole straight split moves together. It stops at each window's minimum size. Corner grips and windows that don't touch still resize on their own. |
@@ -86,6 +87,7 @@ This is an **internal integration**, not a stable public DSH API. It plugs into:
 | `main` keyed slot, key `dsh-desktop-ui` | the desktop canvas and taskbar, selected with `ctx.layout.selectPanel` |
 | `main.conversation` entry | each window renders the stock conversation entry's own component with its own render rights, captured when DSH first renders it, so every plugin contribution appears inside windows too (falls back to the `conversation.content` factory if unavailable) |
 | `dsh-desktop-ui.window` (session-scoped child slot) | one window body per session, under that session's scope |
+| `plugins.bundle.config` (key `dsh-desktop-ui`) | the plugin's settings on its own Plugins page (the hover opt-out) |
 | `sidebar.footer.action` (order −100) | the Desktop mode switch, sorted first; the footer row is stacked vertically while it is present |
 | `conversation.header.leading` (popout pages only) | the **Pop back in** button in a popped-out window's header |
 | `BroadcastChannel('dsh-desktop-ui.v1')` | same-origin messages between the canvas and popout windows (`popped`, `pop-in-request`, `pop-in`, `closed`); session ids only |
@@ -104,6 +106,7 @@ Known limitations:
 - Window positions are stored per browser, not per account or device.
 - Window scaling uses CSS `zoom` (Chrome/Edge/Safari and Firefox 126+).
 - Popout uses `window.open`; if the browser blocks popups for the DSH page, allow them for that address. Popout URLs carry only `#dsh-desktop-ui-popout=<session id>` in the hash (never the launch token); the window authenticates with the existing DSH browser cookie. Popped-out state is not saved — after a full restart sessions come back docked on the canvas.
+- The sidebar highlight finds rows by DSH's `data-row-key` attributes and opens folders by clicking their own folder control, so DSH's sidebar keeps owning its state. A future sidebar redesign may need an update.
 - Reusing the stock conversation entry wraps it at runtime (the same technique `dsh-workspace-sorter` uses for the sidebar). It is restored when the plugin unloads.
 - The UI strings are English only.
 - Not yet tested: two tabs at once, a live model turn streaming inside a window, and coexistence with other sidebar plugins.

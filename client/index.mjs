@@ -231,6 +231,27 @@ export function createClientPlugin(require) {
     return { x, y, w, h };
   }
 
+  /**
+   * Display name of the workspace that owns a session, or undefined when the
+   * session is ungrouped. DSH stores the default workspace as
+   * "default-workspace" and shows it as "Default workspace".
+   */
+  function workspaceNameFor(items, sessionId) {
+    if (!Array.isArray(items) || !validId(sessionId)) return undefined;
+    const ws = items.find(item => Array.isArray(item?.sessionIds) && item.sessionIds.includes(sessionId));
+    if (!ws) return undefined;
+    const title = typeof ws.title === 'string' ? ws.title.trim() : '';
+    if (title === 'default-workspace') return 'Default workspace';
+    if (title) return title;
+    const base = typeof ws.path === 'string' ? ws.path.split(/[\\/]/).filter(Boolean).pop() : '';
+    return base || undefined;
+  }
+
+  /** Full "workspace | session" label used for tooltips and accessible names. */
+  function windowLabel(workspace, title) {
+    return workspace ? `${workspace} | ${title}` : title;
+  }
+
   /* ---------- popout helpers (pure) ---------- */
 
   const POPOUT_HASH = 'dsh-desktop-ui-popout';
@@ -547,6 +568,9 @@ export function createClientPlugin(require) {
 .dsh-dui-win[hidden]{display:none}
 .dsh-dui-title{flex:none;display:flex;align-items:center;height:32px;padding-left:12px;gap:8px;border-bottom:.5px solid var(--dsw-alias-border-l2);user-select:none;touch-action:none;cursor:default;background:var(--dsw-alias-bg-base);border-radius:var(--dsw-radius-md,10px) var(--dsw-radius-md,10px) 0 0}
 .dsh-dui-win:not([data-focused]) .dsh-dui-title{color:var(--dsw-alias-label-tertiary)}
+.dsh-dui-title-ws{color:var(--dsw-alias-label-tertiary);font-weight:500}
+.dsh-dui-title-sep{margin:0 6px;color:var(--dsw-alias-label-tertiary);opacity:.6}
+.dsh-dui-title-session{color:inherit}
 .dsh-dui-title-text{flex:1;min-width:0;font-size:12px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dsh-dui-dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-label-tertiary);opacity:.5}
 .dsh-dui-dot[data-running]{background:var(--dsw-alias-label-primary);opacity:1;animation:dsh-dui-pulse 1.2s ease-in-out infinite}
@@ -1031,9 +1055,11 @@ export function createClientPlugin(require) {
     ctx.effect(() => ctx.slots.subscribe('main.conversation', captureStockConversation), 'dsh-desktop-ui: capture conversation entry');
     captureStockConversation();
 
-    function Window({ win, focused, narrow, size, canvasRef, onSnapPreview, liveOverride, setLinkedLive, allWindows, renderSlot, SessionProvider, useSessions, useSessionStatus }) {
+    function Window({ win, focused, narrow, size, canvasRef, onSnapPreview, liveOverride, setLinkedLive, allWindows, renderSlot, SessionProvider, useSessions, useSessionStatus, useWorkspaces }) {
       const { sessionId } = win;
-      const title = useSessions(state => sessionTitle(state.byId[sessionId], sessionId));
+      const sessionName = useSessions(state => sessionTitle(state.byId[sessionId], sessionId));
+      const workspace = useWorkspaces ? useWorkspaces(state => workspaceNameFor(state.items, sessionId)) : undefined;
+      const title = windowLabel(workspace, sessionName);
       const statusRunning = useSessionStatus(map => map.get(sessionId)?.running);
       const summaryRunning = useSessions(state => state.byId[sessionId]?.running === true);
       const running = statusRunning ?? summaryRunning;
@@ -1137,7 +1163,10 @@ export function createClientPlugin(require) {
         onDoubleClick: e => { if (!e.target.closest('button')) actions.toggleMax(sessionId); },
       },
       h('span', { className: 'dsh-dui-dot', 'data-running': running ? '' : undefined, title: running ? 'Running' : 'Idle' }),
-      h('span', { className: 'dsh-dui-title-text', title }, title),
+      h('span', { className: 'dsh-dui-title-text', title },
+        workspace ? h('span', { className: 'dsh-dui-title-ws' }, workspace) : null,
+        workspace ? h('span', { className: 'dsh-dui-title-sep', 'aria-hidden': 'true' }, '|') : null,
+        h('span', { className: 'dsh-dui-title-session' }, sessionName)),
       h('div', { className: 'dsh-dui-ctl' },
         canPopOut && popoutSelf === undefined ? h('button', { type: 'button', 'data-popout': '', 'aria-label': `Pop out ${title} into a new browser window`, title: 'Pop out into a new window', onClick: () => actions.popOut(sessionId) }, I.popout()) : null,
         h('button', { type: 'button', 'aria-label': `Minimize ${title}`, title: 'Minimize', onClick: () => actions.minimize(sessionId) }, I.min()),
@@ -1179,8 +1208,10 @@ export function createClientPlugin(require) {
         h('div', null, now.toLocaleDateString([], { day: 'numeric', month: 'short' })));
     }
 
-    function TaskButton({ win, focused, useSessions, useSessionStatus }) {
-      const title = useSessions(state => sessionTitle(state.byId[win.sessionId], win.sessionId));
+    function TaskButton({ win, focused, useSessions, useSessionStatus, useWorkspaces }) {
+      const sessionName = useSessions(state => sessionTitle(state.byId[win.sessionId], win.sessionId));
+      const workspace = useWorkspaces ? useWorkspaces(state => workspaceNameFor(state.items, win.sessionId)) : undefined;
+      const title = windowLabel(workspace, sessionName);
       const running = useSessionStatus(map => map.get(win.sessionId)?.running) ?? false;
       return h('button', {
         type: 'button',
@@ -1192,11 +1223,11 @@ export function createClientPlugin(require) {
         onClick: () => (win.poppedOut ? actions.popOut(win.sessionId) : actions.taskClick(win.sessionId)),
       },
       h('span', { className: 'dsh-dui-dot', 'data-running': running ? '' : undefined }),
-      h('span', null, title),
+      h('span', null, sessionName),
       win.poppedOut ? h('span', { className: 'dsh-dui-task-pop', title: 'Popped out', 'aria-label': 'popped out' }, I.popout(12)) : null);
     }
 
-    function Desktop({ renderSlot, SessionProvider, useSessions, useSessionStatus }) {
+    function Desktop({ renderSlot, SessionProvider, useSessions, useSessionStatus, useWorkspaces }) {
       // Defensive: render at most one window per session, whatever the state says.
       const allWindows = useDesktop(s => s.windows);
       const windows = React.useMemo(() => uniqueWindows(allWindows), [allWindows]);
@@ -1238,14 +1269,14 @@ export function createClientPlugin(require) {
             windows.map(win => h(Window, {
               key: win.sessionId, win, focused: win.sessionId === focus, narrow: narrow && win.sessionId === focus ? true : narrow,
               size, canvasRef, onSnapPreview: setSnap, liveOverride: linkedLive?.get(win.sessionId) ?? null, setLinkedLive, allWindows: windows,
-              renderSlot, SessionProvider, useSessions, useSessionStatus,
+              renderSlot, SessionProvider, useSessions, useSessionStatus, useWorkspaces,
             })),
             snapStyle ? h('div', { className: 'dsh-dui-snap', style: snapStyle }) : null)),
         h('nav', { className: 'dsh-dui-taskbar', 'aria-label': 'Taskbar' },
           h('button', { type: 'button', className: 'dsh-dui-tb', 'data-icon': '', title: 'New session', 'aria-label': 'New session', onClick: actions.newSession }, I.plus(18)),
           h('div', { className: 'dsh-dui-sep' }),
           h('div', { className: 'dsh-dui-tasks', role: 'toolbar', 'aria-label': 'Open windows' },
-            windows.map(win => h(TaskButton, { key: win.sessionId, win, focused: win.sessionId === focus, useSessions, useSessionStatus }))),
+            windows.map(win => h(TaskButton, { key: win.sessionId, win, focused: win.sessionId === focus, useSessions, useSessionStatus, useWorkspaces }))),
           h('div', { className: 'dsh-dui-tray' },
             narrow ? null : [
               h('button', { key: 'c', type: 'button', className: 'dsh-dui-tb', 'data-icon': '', title: 'Cascade windows', 'aria-label': 'Cascade windows', onClick: () => actions.arrange('cascade', size) }, I.cascade()),
@@ -1309,7 +1340,7 @@ export function createClientPlugin(require) {
     apply,
     // Pure helpers for tests.
     sanitize, serialize, parseLayout, createStore, createHostSync, findEntryNamespace, uniqueWindows, openWindow, closeWindow, focusWindow, minimizeWindow, toggleMaximize,
-    setGeometry, snapWindow, snapGeometry, arrange, dragRect, arrangeGeometry, linkedNeighbours, moveSharedEdge, toggleShowDesktop, cycleZoom, isBrowserRuntime, popoutTarget, popoutUrl, setPopped, pruneMissing, focusedId, emptyState,
+    setGeometry, snapWindow, snapGeometry, arrange, dragRect, arrangeGeometry, workspaceNameFor, windowLabel, linkedNeighbours, moveSharedEdge, toggleShowDesktop, cycleZoom, isBrowserRuntime, popoutTarget, popoutUrl, setPopped, pruneMissing, focusedId, emptyState,
     constants: { PANEL, WINDOW_SLOT, TOGGLE_ID, TOGGLE_ORDER, STORAGE_KEY, MAX_WINDOWS, ZOOM_STEPS, DEFAULT_ZOOM },
   };
 }

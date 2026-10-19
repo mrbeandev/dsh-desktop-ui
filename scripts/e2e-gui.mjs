@@ -168,6 +168,7 @@ try {
     await delay(400);
     const ids = await evaluate(`[...document.querySelectorAll('.dsh-dui-win')].map(n => n.getAttribute('data-session-id'))`);
     check('a session never opens in more than one window', ids.length === new Set(ids).size && ids.length === winsBefore, { ids, winsBefore });
+    check('window title bars read "workspace | session"', await evaluate(`[...document.querySelectorAll('.dsh-dui-win')].every(w => { const ws = w.querySelector('.dsh-dui-title-ws')?.textContent; const sep = w.querySelector('.dsh-dui-title-sep')?.textContent; const se = w.querySelector('.dsh-dui-title-session')?.textContent; return ws === 'Desktop Demo' && sep === '|' && !!se && w.querySelector('.dsh-dui-title-text').title === ws + ' | ' + se; })`), await evaluate(`[...document.querySelectorAll('.dsh-dui-title-text')].map(t => t.textContent)`));
     check('one taskbar entry per window', await evaluate(`document.querySelectorAll('.dsh-dui-task').length === document.querySelectorAll('.dsh-dui-win').length`));
     check('seeded transcript renders inside a window', await wait(`[...document.querySelectorAll('.dsh-dui-win .dsh-dui-body')].some(b => /checklist|flaky|README/.test(b.innerText))`));
     check('embedded conversation renders in each window', await wait(`[...document.querySelectorAll('.dsh-dui-win')].every(w => w.querySelector('[data-conversation-content]'))`));
@@ -233,7 +234,12 @@ try {
     {
       const vis = await evaluate(`[...document.querySelectorAll('.dsh-dui-win')].filter(n => !n.hidden).map(n => n.getAttribute('data-session-id'))`);
       const parked = vis.slice(2);
-      for (const id of parked) await click(`.dsh-dui-win[data-session-id="${id}"] button[aria-label^="Minimize"]`);
+      // Minimize from the taskbar (a focused window's taskbar button minimizes it);
+      // the window's own button can be covered when four windows are 280px wide.
+      for (const id of parked) {
+        await click(`.dsh-dui-task[data-session-id="${id}"]`);
+        if (!(await evaluate(`document.querySelector('.dsh-dui-win[data-session-id="${id}"]').hidden`))) await click(`.dsh-dui-task[data-session-id="${id}"]`);
+      }
       await wait(`[...document.querySelectorAll('.dsh-dui-win')].filter(n => !n.hidden).length === 2`, 30);
       await click('button[aria-label="Show windows side by side"]');
       await wait(`[...document.querySelectorAll('.dsh-dui-win')].filter(n => !n.hidden).every(n => n.getBoundingClientRect().width > 500)`, 30);

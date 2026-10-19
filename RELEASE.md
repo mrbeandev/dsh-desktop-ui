@@ -1,6 +1,24 @@
 # Release checklist
 
-## Current candidate: 0.1.4 (not yet published)
+## Current candidate: 0.1.5 (not yet published)
+
+Tested 2026-10-19 on DSH 0.2.0-rc.2 in a fresh disposable `DSH_HOME` with
+`dsh-all-usage@1.2.0` and `dsh-rewind-plugin@0.15.0-beta.1`, real headless Chrome
+over CDP, no model calls.
+
+| Check | Result |
+|---|---|
+| Unit tests (`npm test`) | 38/38 |
+| Packed tarball, GUI test | 61/61, twice in a row |
+
+### Changes in 0.1.5
+
+- Window title bars show `workspace | session`; ungrouped sessions show only the
+  session title. The default workspace is labelled "Default workspace", and an
+  untitled workspace falls back to its folder name.
+- Includes 0.1.4's linked borders (0.1.4 was not published separately).
+
+## Previous candidate: 0.1.4
 
 Tested 2026-10-19 on DSH 0.2.0-rc.2 in a fresh disposable `DSH_HOME` under `/tmp`
 with `dsh-all-usage@1.2.0` and `dsh-rewind-plugin@0.15.0-beta.1`, real headless

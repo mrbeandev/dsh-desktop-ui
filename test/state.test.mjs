@@ -465,3 +465,18 @@ test('an unrelated window elsewhere on the desktop is never pulled into a split'
   const out = P.moveSharedEdge(rects, 'a', 'e', 40, links);
   assert.equal(out.has('loner'), false);
 });
+
+test('window titles read "workspace | session"', () => {
+  const items = [
+    { workspaceId: 'w1', title: 'acme-web', path: '/p/acme-web', sessionIds: ['s1', 's2'] },
+    { workspaceId: 'w2', title: 'default-workspace', path: '/p/default', sessionIds: ['s3'] },
+    { workspaceId: 'w3', title: '', path: '/home/me/projects/data-pipeline', sessionIds: ['s4'] },
+  ];
+  assert.equal(P.workspaceNameFor(items, 's2'), 'acme-web');
+  assert.equal(P.workspaceNameFor(items, 's3'), 'Default workspace');
+  assert.equal(P.workspaceNameFor(items, 's4'), 'data-pipeline');
+  assert.equal(P.workspaceNameFor(items, 'ungrouped'), undefined);
+  assert.equal(P.workspaceNameFor(null, 's1'), undefined);
+  assert.equal(P.windowLabel('acme-web', 'Fix flaky checkout test'), 'acme-web | Fix flaky checkout test');
+  assert.equal(P.windowLabel(undefined, 'Fix flaky checkout test'), 'Fix flaky checkout test');
+});

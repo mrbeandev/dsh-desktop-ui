@@ -280,13 +280,29 @@ try {
       await click('button[aria-label="Show windows side by side"]');
     }
     check('Side by side gives equal columns', noOverlap(cols) && cols.every(b => Math.abs(b[2] - cols[0][2]) < 2 && Math.abs(b[1] - cols[0][1]) < 2), cols.map(b => b.map(Math.round)));
+    // Closing a window that is NOT focused, in a tiled layout, must really close it.
+    {
+      await click('button[aria-label="Tile windows"]');
+      await delay(300);
+      const f = await focused();
+      const other = await evaluate(`[...document.querySelectorAll('.dsh-dui-win')].filter(n => !n.hidden).map(n => n.getAttribute('data-session-id')).find(id => id !== ${JSON.stringify(f)})`);
+      const countBefore = await evaluate(`document.querySelectorAll('.dsh-dui-win').length`);
+      await click(`.dsh-dui-win[data-session-id="${other}"] button[aria-label^="Close"]`);
+      await delay(900);
+      check('closing an unfocused tiled window closes it (no reopen as a floating window)', await evaluate(`!document.querySelector('.dsh-dui-win[data-session-id="${other}"]') && document.querySelectorAll('.dsh-dui-win').length === ${countBefore - 1}`), await evaluate(`[...document.querySelectorAll('.dsh-dui-win')].map(n => n.getAttribute('data-session-id'))`));
+      // Bring it back for the rest of the run.
+      const rk = `session:${other}`;
+      if (await evaluate(`!!document.querySelector('[data-row-key="${rk}"]')`)) await click(`[data-row-key="${rk}"] span[class*="_title"]`);
+      await wait(`!!document.querySelector('.dsh-dui-win[data-session-id="${other}"]')`, 30);
+    }
     await click('button[aria-label="Cascade windows"]');
     check('Cascade restores overlapping stack', !noOverlap(await evaluate(visibleBoxes)));
 
+    const shownBefore = (await evaluate(visibleBoxes)).length;
     await click('button[aria-label="Show desktop"]');
     check('Show desktop hides all windows', (await evaluate(visibleBoxes)).length === 0);
     await click('button[aria-label="Show desktop"]');
-    check('Show desktop again restores them', (await evaluate(visibleBoxes)).length >= 3);
+    check('Show desktop again restores them', await wait(`(${visibleBoxes}).length === ${shownBefore}`, 20), { shownBefore, now: (await evaluate(visibleBoxes)).length });
 
     // ---- Sidebar hover highlight ----
     {
@@ -294,10 +310,23 @@ try {
       const wkey = await evaluate(`[...document.querySelectorAll('[role=treeitem]')].map(e => e.getAttribute('data-row-key')).find(k => /^workspace:./.test(k ?? ''))`);
       // Collapse the workspace through its own folder control so the row is hidden.
       if (await evaluate(`document.querySelector('[data-row-key="${wkey}"]')?.getAttribute('aria-expanded') === 'true'`)) await click(`[data-row-key="${wkey}"] [class*="_folder"]`);
-      check('hover test starts with the workspace collapsed', await wait(`document.querySelector('[data-row-key="${wkey}"]')?.getAttribute('aria-expanded') === 'false'`, 20));
+      // Move the pointer off all windows first, so no hover is in progress while collapsing.
+      const off0 = await center('.dsh-dui-taskbar');
+      await mouse('mouseMoved', off0.x, off0.y, { buttons: 0 });
+      await delay(500);
+      if (await evaluate(`document.querySelector('[data-row-key="${wkey}"]')?.getAttribute('aria-expanded') === 'true'`)) await click(`[data-row-key="${wkey}"] [class*="_folder"]`);
+      check('hover test starts with the workspace collapsed', await wait(`document.querySelector('[data-row-key="${wkey}"]')?.getAttribute('aria-expanded') === 'false' && !document.querySelector('[data-row-key="session:${hovered}"]')`, 30));
+      // Start the hover from outside every window (the pointer may already be over one).
+      const away = await center('.dsh-dui-taskbar');
+      await mouse('mouseMoved', away.x, away.y, { buttons: 0 });
+      await delay(400);
+      // Let the close-time sync and the collapse settle before hovering.
+      await delay(600);
       const hw = await center(`.dsh-dui-win[data-session-id="${hovered}"] .dsh-dui-title-text`);
+      await mouse('mouseMoved', hw.x - 4, hw.y, { buttons: 0 });
       await mouse('mouseMoved', hw.x, hw.y, { buttons: 0 });
-      check('hovering a window expands its collapsed workspace', await wait(`document.querySelector('[data-row-key="${wkey}"]')?.getAttribute('aria-expanded') === 'true'`, 30));
+      const expanded = await wait(`document.querySelector('[data-row-key="${wkey}"]')?.getAttribute('aria-expanded') === 'true'`, 30);
+      check('hovering a window expands its collapsed workspace', expanded);
       check('hovering a window highlights its session and workspace in the sidebar', await wait(`!!document.querySelector('[data-row-key="session:${hovered}"][data-dsh-desktop-ui-hover]') && !!document.querySelector('[data-row-key="${wkey}"][data-dsh-desktop-ui-hover]')`, 30));
       const tb = await center('.dsh-dui-taskbar');
       await mouse('mouseMoved', tb.x, tb.y, { buttons: 0 });
@@ -325,6 +354,9 @@ try {
       const keep = await center(`.dsh-dui-win[data-session-id="${hovered}"] .dsh-dui-title-text`);
       await mouse('mouseMoved', keep.x, keep.y, { buttons: 0 }); await delay(400);
       await mouse('mouseMoved', tb.x, tb.y, { buttons: 0 }); await delay(500);
+      // Leave the sidebar as later steps expect it: workspace expanded.
+      if (await evaluate(`document.querySelector('[data-row-key="${wkey}"]')?.getAttribute('aria-expanded') === 'false'`)) await click(`[data-row-key="${wkey}"] [class*="_folder"]`);
+      await wait(`document.querySelector('[data-row-key="${wkey}"]')?.getAttribute('aria-expanded') === 'true'`, 20);
     }
 
     // ---- Popout (browser only) ----

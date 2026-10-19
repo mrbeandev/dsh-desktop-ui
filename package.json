@@ -1,6 +1,6 @@
 {
   "name": "dsh-desktop-ui",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Desktop mode for the DeepSeek Harness web GUI: open sessions as movable, resizable windows with a taskbar.",
   "type": "module",
   "main": "index.mjs",

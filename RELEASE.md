@@ -1,6 +1,33 @@
 # Release checklist
 
-## Current candidate: 0.1.6 (not yet published)
+## Current candidate: 0.1.7 (not yet published)
+
+Tested 2026-10-19 on DSH 0.2.0-rc.2 in a disposable `DSH_HOME` with
+`dsh-all-usage@1.2.0` and `dsh-rewind-plugin@0.15.0-beta.1`, real headless Chrome
+over CDP, no model calls.
+
+| Check | Result |
+|---|---|
+| Unit tests (`npm test`) | 39/39 |
+| Packed tarball, GUI test | 69/69, three runs in a row |
+
+### Changes in 0.1.7
+
+- **Fixed: closing a window could reopen it as a floating window.** Pressing
+  Close on a window that wasn't focused (common after Tile / Side by side) first
+  focused it, which scheduled a sidebar selection; that fired after the close and
+  the desktop reopened the session. Window control buttons no longer focus the
+  window, a pending selection is cancelled on close, and a stale selection can no
+  longer reopen a closed window. Reproduced on 0.1.6 and verified fixed by a new
+  GUI check.
+- **Fixed: sidebar hover could stop working after closing a window under the
+  pointer** (no pointer-leave fires for a removed element). Closing, minimizing,
+  popping out or removing a window now ends its hover.
+- Hover expansion is more robust: it clicks the workspace row's own toggle, waits
+  for the rows to render, and ignores rows still animating out of a collapsed
+  workspace.
+
+## Previous candidate: 0.1.6
 
 Tested 2026-10-19 on DSH 0.2.0-rc.2 in a disposable `DSH_HOME` with
 `dsh-all-usage@1.2.0` and `dsh-rewind-plugin@0.15.0-beta.1`, real headless Chrome

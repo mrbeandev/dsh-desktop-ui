@@ -583,11 +583,18 @@ export function createClientPlugin(require) {
   /* ------------------------------------------------------------------ */
 
   const CSS = `
+/* Desktop layers, bottom to top:
+     1. the base colour (what transparent wallpaper pixels show through),
+     2. the wallpaper image, at "Wallpaper strength",
+     3. a canvas tint at "Canvas opacity" over the wallpaper,
+     4. windows and the taskbar.
+   Without a wallpaper, "Canvas opacity" fades the canvas itself, so what is
+   behind the desktop (the DSH page) shows through. */
 [data-dsh-desktop-ui]{position:relative;display:flex;flex-direction:column;width:100%;height:100%;min-width:0;min-height:0;background:color-mix(in srgb,var(--dsw-alias-bg-layer-1,#f4f4f5) calc(var(--dsh-dui-canvas-alpha,1) * 100%),transparent);color:var(--dsw-alias-label-primary);font-family:inherit;overflow:hidden;isolation:isolate}
-/* Wallpaper sits under the canvas colour. Transparent parts of the image show
-   the canvas colour (or, with a transparent canvas, whatever is behind DSH). */
-.dsh-dui-wallpaper{position:absolute;inset:0;z-index:-1;pointer-events:none;background-position:center;background-size:var(--dsh-dui-wall-size,cover);background-repeat:var(--dsh-dui-wall-repeat,no-repeat);opacity:var(--dsh-dui-wall-alpha,1)}
-[data-dsh-desktop-ui][data-wallpaper]{background:color-mix(in srgb,var(--dsw-alias-bg-layer-1,#f4f4f5) calc(var(--dsh-dui-canvas-alpha,1) * 100%),transparent)}
+[data-dsh-desktop-ui][data-wallpaper]{background:var(--dsw-alias-bg-layer-1,#f4f4f5)}
+.dsh-dui-wallpaper{position:absolute;inset:0;z-index:0;pointer-events:none;background-position:center;background-size:var(--dsh-dui-wall-size,cover);background-repeat:var(--dsh-dui-wall-repeat,no-repeat);opacity:var(--dsh-dui-wall-alpha,1)}
+.dsh-dui-wall-tint{position:absolute;inset:0;z-index:0;pointer-events:none;background:var(--dsw-alias-bg-layer-1,#f4f4f5);opacity:var(--dsh-dui-canvas-alpha,1)}
+[data-dsh-desktop-ui]>.dsh-dui-canvas,[data-dsh-desktop-ui]>.dsh-dui-taskbar{position:relative;z-index:1}
 [data-dsh-desktop-ui][data-wallpaper] .dsh-dui-empty-title,[data-dsh-desktop-ui][data-wallpaper] .dsh-dui-empty-text{text-shadow:0 1px 2px var(--dsw-alias-bg-base)}
 [data-dsh-desktop-ui] *{box-sizing:border-box}
 [data-dsh-desktop-ui] button{font-family:inherit;color:inherit}
@@ -642,8 +649,11 @@ export function createClientPlugin(require) {
 .dsh-dui-segmented button[aria-checked=true]{background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);box-shadow:var(--dsw-elevation-soft,0 1px 3px rgba(0,0,0,.1))}
 .dsh-dui-preview-wrap{position:sticky;top:12px}
 .dsh-dui-preview{position:relative;isolation:isolate;height:170px;margin-top:6px;border-radius:var(--dsw-radius-md,10px);overflow:hidden;border:.5px solid var(--dsw-alias-border-l2);display:flex;flex-direction:column;background:repeating-conic-gradient(var(--dsw-alias-interactive-bg-hover) 0 25%,transparent 0 50%) 0 0/14px 14px}
-.dsh-dui-preview-canvas{position:relative;flex:1;background:color-mix(in srgb,var(--dsw-alias-bg-layer-1,#f4f4f5) calc(var(--dsh-dui-canvas-alpha,1) * 100%),transparent)}
-.dsh-dui-preview .dsh-dui-wallpaper{z-index:-1}
+.dsh-dui-preview-canvas{position:relative;z-index:1;flex:1;background:color-mix(in srgb,var(--dsw-alias-bg-layer-1,#f4f4f5) calc(var(--dsh-dui-canvas-alpha,1) * 100%),transparent)}
+.dsh-dui-preview[data-wallpaper]{background:var(--dsw-alias-bg-layer-1,#f4f4f5)}
+.dsh-dui-preview[data-wallpaper] .dsh-dui-preview-canvas{background:none}
+.dsh-dui-preview .dsh-dui-wallpaper,.dsh-dui-preview .dsh-dui-wall-tint{z-index:0}
+.dsh-dui-preview-bar{position:relative;z-index:1}
 .dsh-dui-preview-win{position:absolute;left:10%;top:14%;width:52%;height:62%;border-radius:6px;background:var(--dsw-alias-bg-base);border:.5px solid var(--dsw-alias-border-l2);box-shadow:var(--dsw-elevation-soft,0 2px 6px rgba(0,0,0,.12))}
 .dsh-dui-preview-win-2{left:44%;top:30%;width:46%;height:54%}
 .dsh-dui-preview-bar{flex:none;height:16px;border-top:.5px solid var(--dsw-alias-border-l2);background:color-mix(in srgb,var(--dsw-alias-bg-base) calc(var(--dsh-dui-taskbar-alpha,1) * 100%),transparent)}
@@ -1582,6 +1592,7 @@ export function createClientPlugin(require) {
         style: { '--dsh-dui-zoom': String(zoom), ...appearanceStyle(appearance) },
       },
         showWall ? h('div', { className: 'dsh-dui-wallpaper', 'aria-hidden': 'true', style: { backgroundImage: `url("${wallUrl}")` } }) : null,
+        showWall ? h('div', { className: 'dsh-dui-wall-tint', 'aria-hidden': 'true' }) : null,
         h('div', { className: 'dsh-dui-canvas' },
           h('div', { className: 'dsh-dui-canvas-inner', ref: canvasRef },
             windows.length === 0 ? h('div', { className: 'dsh-dui-empty' },
@@ -1676,15 +1687,18 @@ export function createClientPlugin(require) {
         if (problem) { setError(problem); return; }
         setError(''); setBusy(true);
         try {
+          const hadWallpaper = !!wallpaperStore.url();
           await wallpaperStore.save(file);
-          actions.setAppearance({ wallpaper: true, wallpaperName: file.name });
+          actions.setAppearance({ wallpaper: true, wallpaperName: file.name, ...(hadWallpaper ? {} : { canvasOpacity: 0 }) });
         } catch (e) {
           setError(`Could not save the image in this browser: ${e?.message ?? e}`);
         } finally { setBusy(false); }
       };
       const fits = [['cover', 'Fill'], ['contain', 'Fit'], ['center', 'Center'], ['tile', 'Tile']];
-      const preview = h('div', { className: 'dsh-dui-preview', 'aria-hidden': 'true', style: appearanceStyle(a) },
-        wallUrl && a.wallpaper ? h('div', { className: 'dsh-dui-wallpaper', style: { backgroundImage: `url("${wallUrl}")` } }) : null,
+      const previewWall = !!wallUrl && a.wallpaper;
+      const preview = h('div', { className: 'dsh-dui-preview', 'aria-hidden': 'true', 'data-wallpaper': previewWall ? '' : undefined, style: appearanceStyle(a) },
+        previewWall ? h('div', { className: 'dsh-dui-wallpaper', style: { backgroundImage: `url("${wallUrl}")` } }) : null,
+        previewWall ? h('div', { className: 'dsh-dui-wall-tint' }) : null,
         h('div', { className: 'dsh-dui-preview-canvas' },
           h('div', { className: 'dsh-dui-preview-win' }), h('div', { className: 'dsh-dui-preview-win dsh-dui-preview-win-2' })),
         h('div', { className: 'dsh-dui-preview-bar' }));
@@ -1692,13 +1706,17 @@ export function createClientPlugin(require) {
         h('h3', { className: 'dsh-dui-section-title' }, 'Desktop background'),
         h('div', { className: 'dsh-dui-appearance-grid' },
           h('div', { className: 'dsh-dui-appearance-controls' },
-            h(Slider, { id: 'dsh-dui-canvas-opacity', label: 'Canvas opacity', desc: 'Lower it to see the wallpaper (or what is behind DSH) through the desktop. Windows stay solid.', value: a.canvasOpacity, onChange: v => actions.setAppearance({ canvasOpacity: v }) }),
+            h(Slider, { id: 'dsh-dui-canvas-opacity', label: 'Canvas opacity',
+              desc: a.wallpaper && wallUrl
+                ? 'How much of the theme-coloured canvas covers the wallpaper. 0% shows the wallpaper fully; 100% hides it. Windows stay solid.'
+                : 'Makes the empty desktop see-through to what is behind it. In a browser tab that is the page background, so pair it with a wallpaper. Windows stay solid.',
+              value: a.canvasOpacity, onChange: v => actions.setAppearance({ canvasOpacity: v }) }),
             h(Slider, { id: 'dsh-dui-taskbar-opacity', label: 'Taskbar opacity', desc: 'Below 100% the taskbar becomes frosted glass.', value: a.taskbarOpacity, onChange: v => actions.setAppearance({ taskbarOpacity: v }) }),
             h('div', { className: 'dsh-dui-setting' },
               h('div', { className: 'dsh-dui-setting-text' },
                 h('p', { className: 'dsh-dui-setting-title', id: 'dsh-dui-wall-label' }, 'Wallpaper'),
                 h('p', { className: 'dsh-dui-setting-desc' }, wallUrl ? (a.wallpaperName || 'Custom image') + ' · stored in this browser' : 'PNG, WebP, GIF, JPEG, AVIF or SVG, up to 12 MB. Transparent areas show the canvas colour.')),
-              h('button', { type: 'button', role: 'switch', className: 'dsh-dui-switch-btn', 'aria-checked': a.wallpaper && !!wallUrl, disabled: !wallUrl, 'aria-labelledby': 'dsh-dui-wall-label', 'data-dsh-desktop-ui-wall-toggle': '', onClick: () => actions.setAppearance({ wallpaper: !a.wallpaper }) },
+              h('button', { type: 'button', role: 'switch', className: 'dsh-dui-switch-btn', 'aria-checked': a.wallpaper && !!wallUrl, disabled: !wallUrl, 'aria-labelledby': 'dsh-dui-wall-label', 'data-dsh-desktop-ui-wall-toggle': '', onClick: () => actions.setAppearance(a.wallpaper ? { wallpaper: false } : { wallpaper: true, ...(a.canvasOpacity >= 100 ? { canvasOpacity: 0 } : {}) }) },
                 h('span', { className: 'dsh-dui-switch', 'aria-hidden': 'true' }))),
             h('div', { className: 'dsh-dui-wall-actions' },
               h('input', { ref: fileRef, type: 'file', accept: WALLPAPER_TYPES.join(','), hidden: true, 'data-dsh-desktop-ui-wall-file': '', onChange: e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) pick(f); } }),
@@ -1709,7 +1727,7 @@ export function createClientPlugin(require) {
               h('p', { className: 'dsh-dui-setting-title' }, 'Wallpaper layout'),
               h('div', { className: 'dsh-dui-segmented', role: 'radiogroup', 'aria-label': 'Wallpaper layout' },
                 fits.map(([value, text]) => h('button', { key: value, type: 'button', role: 'radio', 'aria-checked': a.wallpaperFit === value, 'data-fit': value, onClick: () => actions.setAppearance({ wallpaperFit: value }) }, text)))) : null,
-            wallUrl ? h(Slider, { id: 'dsh-dui-wall-opacity', label: 'Wallpaper strength', value: a.wallpaperOpacity, onChange: v => actions.setAppearance({ wallpaperOpacity: v }) }) : null,
+            wallUrl ? h(Slider, { id: 'dsh-dui-wall-opacity', label: 'Wallpaper opacity', desc: 'Lower it to blend the image into the theme colour.', value: a.wallpaperOpacity, onChange: v => actions.setAppearance({ wallpaperOpacity: v }) }) : null,
             h('div', { className: 'dsh-dui-wall-actions' },
               h('button', { type: 'button', className: 'dsh-dui-btn dsh-dui-btn-sm dsh-dui-btn-quiet', 'data-dsh-desktop-ui-appearance-reset': '', onClick: () => actions.setAppearance({ canvasOpacity: 100, taskbarOpacity: 100, wallpaperFit: 'cover', wallpaperOpacity: 100 }) }, 'Reset appearance'))),
           h('div', { className: 'dsh-dui-preview-wrap' }, h('p', { className: 'dsh-dui-setting-desc' }, 'Preview'), preview)));

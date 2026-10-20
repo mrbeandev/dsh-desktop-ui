@@ -103,6 +103,27 @@ try {
     if (card) { await mouse('mousePressed', card.x, card.y); await mouse('mouseReleased', card.x, card.y); }
     return wait(`!!document.querySelector('[data-dsh-desktop-ui-hover-toggle]')`, 40);
   };
+  // Read one rendered pixel (what the user actually sees) as [r, g, b].
+  const pixelAt = async (x, y) => {
+    const r = await send('Page.captureScreenshot', { format: 'png', clip: { x: Math.round(x), y: Math.round(y), width: 1, height: 1, scale: 1 } });
+    const png = Buffer.from(r.result.data, 'base64');
+    const { inflateSync } = await import('node:zlib');
+    let off = 8, idat = [];
+    while (off < png.length) { const len = png.readUInt32BE(off); const type = png.toString('ascii', off + 4, off + 8); if (type === 'IDAT') idat.push(png.subarray(off + 8, off + 8 + len)); off += 12 + len; }
+    const raw = inflateSync(Buffer.concat(idat));
+    // One pixel, one row: filters 1/3/4 with no left or upper neighbour leave the bytes as is,
+    // and filter 2 (Up) adds a zero row. So the bytes after the filter byte are the pixel.
+    const colorType = png[25];
+    return colorType === 6 || colorType === 2 ? [raw[1], raw[2], raw[3]] : [raw[1], raw[1], raw[1]];
+  };
+  const emptySpot = () => evaluate(`(() => { const c = document.querySelector('.dsh-dui-canvas-inner').getBoundingClientRect(); return { x: c.right - 14, y: c.bottom - 14 }; })()`);
+  const setSlider = (id, v) => evaluate(`(() => { const r = document.querySelector('[data-dsh-desktop-ui-range="${id}"]'); if (!r) return false; Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(r, '${v}'); r.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+  const backToDesktop = async () => {
+    await click('[data-dsh-desktop-ui-toggle]'); await delay(300);
+    if (!(await evaluate(`!!document.querySelector('[data-dsh-desktop-ui]')`))) await click('[data-dsh-desktop-ui-toggle]');
+    await wait(`!!document.querySelector('[data-dsh-desktop-ui]')`, 30);
+    await delay(400);
+  };
   const state = () => evaluate(`JSON.parse(localStorage.getItem('dsh-desktop-ui.state.v1') || 'null')`);
   const focused = () => evaluate(`document.querySelector('.dsh-dui-win[data-focused]')?.getAttribute('data-session-id')`);
   const visibleBoxes = `[...document.querySelectorAll('.dsh-dui-win')].filter(n => !n.hidden).map(n => { const r = n.getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; })`;
@@ -370,6 +391,44 @@ try {
       await wait(`document.querySelector('[data-row-key="${wkey}"]')?.getAttribute('aria-expanded') === 'true'`, 20);
     }
 
+    // ---- Appearance, measured in rendered pixels ----
+    {
+      // Solid red wallpaper so any blend is unambiguous.
+      await openPluginPage();
+      await evaluate(`(async () => { const c = document.createElement('canvas'); c.width = 8; c.height = 8; const g = c.getContext('2d'); g.fillStyle = 'rgb(255,0,0)'; g.fillRect(0, 0, 8, 8); const blob = await new Promise(r => c.toBlob(r, 'image/png')); const f = new File([blob], 'red.png', { type: 'image/png' }); const i = document.querySelector('[data-dsh-desktop-ui-wall-file]'); const dt = new DataTransfer(); dt.items.add(f); i.files = dt.files; i.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+      await wait(`document.querySelector('[data-dsh-desktop-ui-wall-toggle]')?.getAttribute('aria-checked') === 'true'`, 30);
+      check('choosing a first wallpaper shows it (canvas opacity drops to 0%)', await wait(`document.querySelector('[data-dsh-desktop-ui-range="dsh-dui-canvas-opacity"]')?.value === '0'`, 10));
+      const measure = async (canvasPct, wallPct) => {
+        await openPluginPage();
+        await setSlider('dsh-dui-canvas-opacity', canvasPct);
+        await setSlider('dsh-dui-wall-opacity', wallPct);
+        await backToDesktop();
+        const spot = await emptySpot();
+        return pixelAt(spot.x, spot.y);
+      };
+      const full = await measure(0, 100);
+      check('wallpaper at full opacity paints the desktop red', full[0] > 240 && full[1] < 20 && full[2] < 20, full);
+      const halfCanvas = await measure(50, 100);
+      check('canvas opacity 50% visibly fades the wallpaper', halfCanvas[1] > 100 && halfCanvas[1] < 160 && halfCanvas[0] > 240, halfCanvas);
+      const covered = await measure(100, 100);
+      check('canvas opacity 100% hides the wallpaper', covered[1] > 230 && covered[2] > 230, covered);
+      const faintWall = await measure(0, 30);
+      check('wallpaper opacity 30% makes the wallpaper faint', faintWall[1] > 150 && faintWall[1] < 200 && faintWall[0] > 240, faintWall);
+      // Without a wallpaper, canvas opacity makes the desktop see-through to the page behind it.
+      await openPluginPage();
+      await click('[data-dsh-desktop-ui-wall-remove]');
+      await setSlider('dsh-dui-canvas-opacity', 0);
+      await evaluate(`document.querySelector('[class*="_frame"]').style.setProperty('background', 'rgb(0, 128, 0)', 'important')`);
+      await backToDesktop();
+      const seeThrough = await (async () => { const sp = await emptySpot(); return pixelAt(sp.x, sp.y); })();
+      check('canvas opacity 0% without a wallpaper shows what is behind the desktop', seeThrough[1] > 100 && seeThrough[0] < 40, seeThrough);
+      await evaluate(`document.querySelector('[class*="_frame"]').style.removeProperty('background')`);
+      await openPluginPage();
+      await click('[data-dsh-desktop-ui-appearance-reset]');
+      await wait(`JSON.parse(localStorage.getItem('dsh-desktop-ui.state.v1') || '{}').appearance?.canvasOpacity === 100`, 20);
+      await backToDesktop();
+    }
+
     // ---- Appearance: transparent canvas + wallpaper with transparent pixels ----
     {
       await openPluginPage();
@@ -395,7 +454,29 @@ try {
       // Back to the desktop.
       await click('[data-dsh-desktop-ui-toggle]'); await delay(300);
       if (!(await evaluate(`!!document.querySelector('[data-dsh-desktop-ui]')`))) await click('[data-dsh-desktop-ui-toggle]');
-      check('desktop shows the wallpaper behind a translucent canvas', await wait(`(() => { const d = document.querySelector('[data-dsh-desktop-ui]'); const w = d?.querySelector(':scope > .dsh-dui-wallpaper'); if (!d || !w) return false; const bg = getComputedStyle(d).backgroundColor; const alpha = (() => { const inner = bg.slice(bg.indexOf('(') + 1, bg.lastIndexOf(')')); if (inner.includes('/')) return Number(inner.split('/').pop().trim()); const p = inner.split(/[ ,]+/).filter(Boolean).map(Number); return p.length > 3 ? p[3] : 1; })(); return d.hasAttribute('data-wallpaper') && d.hasAttribute('data-transparent') && alpha < 0.5 && w.style.backgroundImage.startsWith('url(') && getComputedStyle(w).backgroundRepeat === 'repeat'; })()`, 30), await evaluate(`getComputedStyle(document.querySelector('[data-dsh-desktop-ui]')).backgroundColor`));
+      {
+        const d = await evaluate(`(() => { const d = document.querySelector('[data-dsh-desktop-ui]'); const w = d?.querySelector(':scope > .dsh-dui-wallpaper'); return { attrs: !!d && d.hasAttribute('data-wallpaper') && d.hasAttribute('data-transparent'), img: !!w && w.style.backgroundImage.startsWith('url('), repeat: w && getComputedStyle(w).backgroundRepeat, tint: !!d?.querySelector(':scope > .dsh-dui-wall-tint') }; })()`);
+        // The test image is red on its left half and transparent on the right, tiled.
+        // Sample a horizontal strip of empty canvas: both kinds of pixel must appear.
+        const strip = await evaluate(`(() => { const r = document.querySelector('.dsh-dui-canvas-inner').getBoundingClientRect(); return { x: Math.round(r.right - 140), y: Math.round(r.bottom - 12) }; })()`);
+        const shot = await send('Page.captureScreenshot', { format: 'png', clip: { x: strip.x, y: strip.y, width: 128, height: 1, scale: 1 } });
+        const { inflateSync } = await import('node:zlib');
+        const png = Buffer.from(shot.result.data, 'base64');
+        let off = 8; const idat = [];
+        while (off < png.length) { const len = png.readUInt32BE(off); const type = png.toString('ascii', off + 4, off + 8); if (type === 'IDAT') idat.push(png.subarray(off + 8, off + 8 + len)); off += 12 + len; }
+        const data = inflateSync(Buffer.concat(idat)); const bpp = png[25] === 6 ? 4 : 3;
+        // Undo the PNG row filter (single row: the "previous row" is all zeros).
+        const filter = data[0], row = Buffer.from(data.subarray(1));
+        for (let k = 0; k < row.length; k++) {
+          const a = k >= bpp ? row[k - bpp] : 0;
+          if (filter === 1) row[k] = (row[k] + a) & 255;
+          else if (filter === 3) row[k] = (row[k] + (a >> 1)) & 255;
+          else if (filter === 4) row[k] = (row[k] + a) & 255; // Paeth with zero previous row picks the left byte
+        }
+        const px = []; for (let k = 0; k < 128; k++) px.push([row[k * bpp], row[k * bpp + 1], row[k * bpp + 2]]);
+        const reddish = px.filter(([r, g]) => r > 200 && g < 140).length, light = px.filter(([r, g, b]) => g > 200 && b > 200).length;
+        check('desktop shows the wallpaper through a 30% canvas, with its transparent parts showing the canvas colour', d.attrs && d.img && d.repeat === 'repeat' && d.tint && reddish > 20 && light > 20, { d, reddish, light });
+      }
       await shot('wallpaper');
       // Windows stay solid on top of the wallpaper.
       check('windows stay solid over the wallpaper', await evaluate(`[...document.querySelectorAll('.dsh-dui-win')].filter(n => !n.hidden).every(n => { const bg = getComputedStyle(n).backgroundColor; const a = (() => { const inner = bg.slice(bg.indexOf('(') + 1, bg.lastIndexOf(')')); if (inner.includes('/')) return Number(inner.split('/').pop().trim()); const p = inner.split(/[ ,]+/).filter(Boolean).map(Number); return p.length > 3 ? p[3] : 1; })(); return a === 1; })`));

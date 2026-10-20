@@ -1,6 +1,36 @@
 # Release checklist
 
-## Current candidate: 0.1.8 (not yet published)
+## Current candidate: 0.1.9 (not yet published)
+
+Tested 2026-10-20 on DSH 0.2.0-rc.2 in a disposable `DSH_HOME` with
+`dsh-all-usage@1.2.0` and `dsh-rewind-plugin@0.15.0-beta.1`, real headless Chrome
+over CDP, no model calls.
+
+| Check | Result |
+|---|---|
+| Unit tests (`npm test`) | 43/43 |
+| Packed tarball, GUI test | 87/87, three runs in a row |
+
+### Fix in 0.1.9 — canvas opacity had no visible effect (0.1.8 regression)
+
+- **Cause.** In 0.1.8 the wallpaper was drawn *above* the canvas colour, so with
+  a wallpaper on, "Canvas opacity" only changed a colour hidden under the image;
+  without a wallpaper it revealed the DSH page behind, which is the same
+  colour, so it looked unchanged too. 0.1.8's GUI test only checked that the
+  setting was stored and a CSS value changed, not what was drawn.
+- **Fix.** The desktop is now layered as: theme colour, wallpaper (at
+  *Wallpaper opacity*), a canvas tint at *Canvas opacity*, then windows and the
+  taskbar. Canvas opacity now visibly fades the wallpaper from 0% (fully shown)
+  to 100% (hidden). Choosing a first wallpaper sets canvas opacity to 0% so it is
+  visible immediately; the settings preview uses the same layering. Labels and
+  descriptions now say exactly what each slider does.
+- **Tests now measure rendered pixels**, using a solid red wallpaper: full
+  opacity paints red; canvas 50% gives a half-faded pink; canvas 100% hides it;
+  wallpaper 30% is faint; with no wallpaper, canvas 0% shows what is behind the
+  desktop; a half-transparent tiled PNG shows both red and canvas-coloured
+  pixels. On 0.1.8 these checks fail (pure red at 50% and 100%); on 0.1.9 all pass.
+
+## Previous release: 0.1.8 (published)
 
 Tested 2026-10-20 on DSH 0.2.0-rc.2 in a disposable `DSH_HOME` with
 `dsh-all-usage@1.2.0` and `dsh-rewind-plugin@0.15.0-beta.1`, real headless Chrome

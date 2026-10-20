@@ -1,6 +1,30 @@
 # Release checklist
 
-## Current candidate: 0.1.7 (not yet published)
+## Current candidate: 0.1.8 (not yet published)
+
+Tested 2026-10-20 on DSH 0.2.0-rc.2 in a disposable `DSH_HOME` with
+`dsh-all-usage@1.2.0` and `dsh-rewind-plugin@0.15.0-beta.1`, real headless Chrome
+over CDP, no model calls.
+
+| Check | Result |
+|---|---|
+| Unit tests (`npm test`) | 43/43 |
+| Packed tarball, GUI test | 81/81, five runs in a row |
+
+### Changes in 0.1.8
+
+- **Taskbar tooltips** show `workspace | session` (plus minimized / popped out).
+  One shared tooltip is drawn above the taskbar, so the scrolling task strip
+  cannot clip it, and it is kept on screen at the edges.
+- **Desktop background editor** on the plugin page, with a live preview:
+  canvas opacity (0–100%), taskbar opacity (frosted glass below 100%), and a
+  wallpaper image with Fill / Fit / Center / Tile and a strength slider. Images
+  with transparent areas are supported. Reset appearance restores the defaults.
+- The wallpaper image is stored in the browser's IndexedDB, not the profile
+  config; its settings are saved with the layout and restored after a restart.
+- Verified in the GUI with a real PNG whose right half is fully transparent.
+
+## Previous release: 0.1.7 (published)
 
 Tested 2026-10-19 on DSH 0.2.0-rc.2 in a disposable `DSH_HOME` with
 `dsh-all-usage@1.2.0` and `dsh-rewind-plugin@0.15.0-beta.1`, real headless Chrome

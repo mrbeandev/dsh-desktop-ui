@@ -182,6 +182,17 @@ try {
     const ids = await evaluate(`[...document.querySelectorAll('.dsh-dui-win')].map(n => n.getAttribute('data-session-id'))`);
     check('a session never opens in more than one window', ids.length === new Set(ids).size && ids.length === winsBefore, { ids, winsBefore });
     check('window title bars read "workspace | session"', await evaluate(`[...document.querySelectorAll('.dsh-dui-win')].every(w => { const ws = w.querySelector('.dsh-dui-title-ws')?.textContent; const sep = w.querySelector('.dsh-dui-title-sep')?.textContent; const se = w.querySelector('.dsh-dui-title-session')?.textContent; return ws === 'Desktop Demo' && sep === '|' && !!se && w.querySelector('.dsh-dui-title-text').title === ws + ' | ' + se; })`), await evaluate(`[...document.querySelectorAll('.dsh-dui-title-text')].map(t => t.textContent)`));
+    {
+      const tid = await evaluate(`document.querySelector('.dsh-dui-task')?.getAttribute('data-session-id')`);
+      const tp = await center(`.dsh-dui-task[data-session-id="${tid}"]`);
+      await mouse('mouseMoved', tp.x, tp.y, { buttons: 0 });
+      const tipOk = await wait(`(() => { const t = document.querySelector('[data-dsh-desktop-ui-task-tip]'); return !!t && t.querySelector('.dsh-dui-task-tip-ws')?.textContent === 'Desktop Demo' && t.querySelector('.dsh-dui-task-tip-sep')?.textContent === '|' && !!t.querySelector('.dsh-dui-task-tip-session')?.textContent; })()`, 20);
+      check('hovering a taskbar button shows "workspace | session" in a tooltip', tipOk, await evaluate(`document.querySelector('[data-dsh-desktop-ui-task-tip]')?.textContent ?? null`));
+      check('the taskbar tooltip is fully on screen', await evaluate(`(() => { const r = document.querySelector('[data-dsh-desktop-ui-task-tip]')?.getBoundingClientRect(); return !!r && r.left >= 0 && r.right <= innerWidth && r.top >= 0; })()`));
+      const off = await center('.dsh-dui-canvas-inner');
+      await mouse('mouseMoved', off.x, off.y - off.h / 2 + 2, { buttons: 0 });
+      check('the taskbar tooltip disappears when the pointer leaves', await wait(`!document.querySelector('[data-dsh-desktop-ui-task-tip]')`, 20));
+    }
     check('one taskbar entry per window', await evaluate(`document.querySelectorAll('.dsh-dui-task').length === document.querySelectorAll('.dsh-dui-win').length`));
     check('seeded transcript renders inside a window', await wait(`[...document.querySelectorAll('.dsh-dui-win .dsh-dui-body')].some(b => /checklist|flaky|README/.test(b.innerText))`));
     check('embedded conversation renders in each window', await wait(`[...document.querySelectorAll('.dsh-dui-win')].every(w => w.querySelector('[data-conversation-content]'))`));
@@ -357,6 +368,49 @@ try {
       // Leave the sidebar as later steps expect it: workspace expanded.
       if (await evaluate(`document.querySelector('[data-row-key="${wkey}"]')?.getAttribute('aria-expanded') === 'false'`)) await click(`[data-row-key="${wkey}"] [class*="_folder"]`);
       await wait(`document.querySelector('[data-row-key="${wkey}"]')?.getAttribute('aria-expanded') === 'true'`, 20);
+    }
+
+    // ---- Appearance: transparent canvas + wallpaper with transparent pixels ----
+    {
+      await openPluginPage();
+      check('appearance editor is on the plugin page', await wait(`!!document.querySelector('[data-dsh-desktop-ui-appearance]')`, 20));
+      // Canvas opacity 30%.
+      await evaluate(`(() => { const r = document.querySelector('[data-dsh-desktop-ui-range="dsh-dui-canvas-opacity"]'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(r, '30'); r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+      check('canvas opacity slider updates the setting', await wait(`document.querySelector('[data-dsh-desktop-ui-range="dsh-dui-canvas-opacity"]')?.value === '30' && JSON.parse(localStorage.getItem('dsh-desktop-ui.state.v1') || '{}').appearance?.canvasOpacity === 30`, 20));
+      // Upload a 64x64 PNG whose right half is fully transparent.
+      const uploaded = await evaluate(`(async () => {
+        const c = document.createElement('canvas'); c.width = 64; c.height = 64;
+        const g = c.getContext('2d'); g.fillStyle = 'rgb(220, 30, 30)'; g.fillRect(0, 0, 32, 64);
+        const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+        const file = new File([blob], 'half-transparent.png', { type: 'image/png' });
+        const input = document.querySelector('[data-dsh-desktop-ui-wall-file]');
+        const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      })()`);
+      check('a PNG with transparent areas can be chosen as wallpaper', uploaded && await wait(`document.querySelector('[data-dsh-desktop-ui-wall-toggle]')?.getAttribute('aria-checked') === 'true'`, 30));
+      check('the settings preview shows the wallpaper', await evaluate(`!!document.querySelector('.dsh-dui-preview .dsh-dui-wallpaper')`));
+      await click('[data-fit="tile"]');
+      check('wallpaper layout can be changed', await wait(`document.querySelector('[data-fit="tile"]')?.getAttribute('aria-checked') === 'true'`, 10));
+      // Back to the desktop.
+      await click('[data-dsh-desktop-ui-toggle]'); await delay(300);
+      if (!(await evaluate(`!!document.querySelector('[data-dsh-desktop-ui]')`))) await click('[data-dsh-desktop-ui-toggle]');
+      check('desktop shows the wallpaper behind a translucent canvas', await wait(`(() => { const d = document.querySelector('[data-dsh-desktop-ui]'); const w = d?.querySelector(':scope > .dsh-dui-wallpaper'); if (!d || !w) return false; const bg = getComputedStyle(d).backgroundColor; const alpha = (() => { const inner = bg.slice(bg.indexOf('(') + 1, bg.lastIndexOf(')')); if (inner.includes('/')) return Number(inner.split('/').pop().trim()); const p = inner.split(/[ ,]+/).filter(Boolean).map(Number); return p.length > 3 ? p[3] : 1; })(); return d.hasAttribute('data-wallpaper') && d.hasAttribute('data-transparent') && alpha < 0.5 && w.style.backgroundImage.startsWith('url(') && getComputedStyle(w).backgroundRepeat === 'repeat'; })()`, 30), await evaluate(`getComputedStyle(document.querySelector('[data-dsh-desktop-ui]')).backgroundColor`));
+      await shot('wallpaper');
+      // Windows stay solid on top of the wallpaper.
+      check('windows stay solid over the wallpaper', await evaluate(`[...document.querySelectorAll('.dsh-dui-win')].filter(n => !n.hidden).every(n => { const bg = getComputedStyle(n).backgroundColor; const a = (() => { const inner = bg.slice(bg.indexOf('(') + 1, bg.lastIndexOf(')')); if (inner.includes('/')) return Number(inner.split('/').pop().trim()); const p = inner.split(/[ ,]+/).filter(Boolean).map(Number); return p.length > 3 ? p[3] : 1; })(); return a === 1; })`));
+      // Wallpaper image survives a reload (IndexedDB) and the settings sync via the Host.
+      await send('Page.reload'); await dismissOnboarding();
+      check('wallpaper and transparency survive a reload', await wait(`!!document.querySelector('[data-dsh-desktop-ui][data-wallpaper][data-transparent] > .dsh-dui-wallpaper')`, 60));
+      // Reset for later runs.
+      await openPluginPage();
+      await wait(`!!document.querySelector('[data-dsh-desktop-ui-wall-remove]')`, 20);
+      await click('[data-dsh-desktop-ui-wall-remove]');
+      await click('[data-dsh-desktop-ui-appearance-reset]');
+      check('removing the wallpaper and resetting restores the solid desktop', await wait(`(() => { const a = JSON.parse(localStorage.getItem('dsh-desktop-ui.state.v1') || '{}').appearance; return a && a.wallpaper === false && a.canvasOpacity === 100 && !document.querySelector('[data-dsh-desktop-ui-wall-remove]'); })()`, 20));
+      await click('[data-dsh-desktop-ui-toggle]'); await delay(300);
+      if (!(await evaluate(`!!document.querySelector('[data-dsh-desktop-ui]')`))) await click('[data-dsh-desktop-ui-toggle]');
+      await wait(`!!document.querySelector('[data-dsh-desktop-ui]')`, 30);
     }
 
     // ---- Popout (browser only) ----

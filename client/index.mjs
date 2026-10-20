@@ -48,7 +48,7 @@ export function createClientPlugin(require) {
   const validId = id => typeof id === 'string' && id.length > 0 && id.length <= 256;
 
   function emptyState() {
-    return { enabled: false, windows: [], z: 0, desktopShown: false, zoom: DEFAULT_ZOOM, hoverSidebar: true };
+    return { enabled: false, windows: [], z: 0, desktopShown: false, zoom: DEFAULT_ZOOM, hoverSidebar: true, appearance: sanitizeAppearance({}) };
   }
 
   /** Read untrusted persisted state into a canonical, bounded shape. */
@@ -58,6 +58,7 @@ export function createClientPlugin(require) {
     state.enabled = raw.enabled === true;
     state.zoom = ZOOM_STEPS.includes(raw.zoom) ? raw.zoom : DEFAULT_ZOOM;
     state.hoverSidebar = raw.hoverSidebar !== false;
+    state.appearance = sanitizeAppearance(raw.appearance);
     const seen = new Set();
     const list = Array.isArray(raw.windows) ? raw.windows : [];
     for (const item of list) {
@@ -253,6 +254,51 @@ export function createClientPlugin(require) {
     return workspace ? `${workspace} | ${title}` : title;
   }
 
+  /* ---------- appearance (pure) ---------- */
+
+  const WALLPAPER_DB = 'dsh-desktop-ui';
+  const WALLPAPER_STORE = 'wallpaper';
+  const WALLPAPER_MAX_BYTES = 12 * 1024 * 1024;
+  const WALLPAPER_TYPES = ['image/png', 'image/webp', 'image/gif', 'image/jpeg', 'image/avif', 'image/svg+xml'];
+  const WALLPAPER_FITS = ['cover', 'contain', 'center', 'tile'];
+
+  /** Canvas appearance with safe defaults; never trusts stored input. */
+  function sanitizeAppearance(raw) {
+    const a = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+    const pct = (v, d) => (Number.isFinite(v) ? Math.round(clamp(v, 0, 100)) : d);
+    return {
+      // 0 = fully transparent canvas, 100 = the normal solid canvas colour.
+      canvasOpacity: pct(a.canvasOpacity, 100),
+      wallpaper: a.wallpaper === true,
+      wallpaperFit: WALLPAPER_FITS.includes(a.wallpaperFit) ? a.wallpaperFit : 'cover',
+      wallpaperOpacity: pct(a.wallpaperOpacity, 100),
+      wallpaperName: typeof a.wallpaperName === 'string' ? a.wallpaperName.slice(0, 120) : '',
+      // 0 = taskbar fully transparent (glass), 100 = solid.
+      taskbarOpacity: pct(a.taskbarOpacity, 100),
+    };
+  }
+
+  /** CSS custom properties for the canvas, derived from the appearance. */
+  function appearanceStyle(a) {
+    const fit = a.wallpaperFit;
+    return {
+      '--dsh-dui-canvas-alpha': String(a.canvasOpacity / 100),
+      '--dsh-dui-wall-alpha': String(a.wallpaperOpacity / 100),
+      '--dsh-dui-wall-size': fit === 'cover' ? 'cover' : fit === 'contain' ? 'contain' : 'auto',
+      '--dsh-dui-wall-repeat': fit === 'tile' ? 'repeat' : 'no-repeat',
+      '--dsh-dui-taskbar-alpha': String(a.taskbarOpacity / 100),
+    };
+  }
+
+  /** Validate a picked wallpaper file before storing it. */
+  function checkWallpaperFile(file) {
+    if (!file || typeof file !== 'object') return 'No file selected.';
+    if (!WALLPAPER_TYPES.includes(file.type)) return 'Use a PNG, WebP, GIF, JPEG, AVIF or SVG image.';
+    if (!(file.size > 0)) return 'That file is empty.';
+    if (file.size > WALLPAPER_MAX_BYTES) return 'Images up to 12 MB are supported.';
+    return undefined;
+  }
+
   /* ---------- popout helpers (pure) ---------- */
 
   const POPOUT_HASH = 'dsh-desktop-ui-popout';
@@ -408,6 +454,7 @@ export function createClientPlugin(require) {
       enabled: state.enabled,
       zoom: state.zoom,
       hoverSidebar: state.hoverSidebar !== false,
+      appearance: sanitizeAppearance(state.appearance),
       windows: state.windows.map(({ sessionId, x, y, w, h, z, minimized, maximized }) => ({ sessionId, x, y, w, h, z, minimized, maximized })),
     });
   }
@@ -536,7 +583,12 @@ export function createClientPlugin(require) {
   /* ------------------------------------------------------------------ */
 
   const CSS = `
-[data-dsh-desktop-ui]{position:relative;display:flex;flex-direction:column;width:100%;height:100%;min-width:0;min-height:0;background:var(--dsw-alias-bg-layer-1,#f4f4f5);color:var(--dsw-alias-label-primary);font-family:inherit;overflow:hidden}
+[data-dsh-desktop-ui]{position:relative;display:flex;flex-direction:column;width:100%;height:100%;min-width:0;min-height:0;background:color-mix(in srgb,var(--dsw-alias-bg-layer-1,#f4f4f5) calc(var(--dsh-dui-canvas-alpha,1) * 100%),transparent);color:var(--dsw-alias-label-primary);font-family:inherit;overflow:hidden;isolation:isolate}
+/* Wallpaper sits under the canvas colour. Transparent parts of the image show
+   the canvas colour (or, with a transparent canvas, whatever is behind DSH). */
+.dsh-dui-wallpaper{position:absolute;inset:0;z-index:-1;pointer-events:none;background-position:center;background-size:var(--dsh-dui-wall-size,cover);background-repeat:var(--dsh-dui-wall-repeat,no-repeat);opacity:var(--dsh-dui-wall-alpha,1)}
+[data-dsh-desktop-ui][data-wallpaper]{background:color-mix(in srgb,var(--dsw-alias-bg-layer-1,#f4f4f5) calc(var(--dsh-dui-canvas-alpha,1) * 100%),transparent)}
+[data-dsh-desktop-ui][data-wallpaper] .dsh-dui-empty-title,[data-dsh-desktop-ui][data-wallpaper] .dsh-dui-empty-text{text-shadow:0 1px 2px var(--dsw-alias-bg-base)}
 [data-dsh-desktop-ui] *{box-sizing:border-box}
 [data-dsh-desktop-ui] button{font-family:inherit;color:inherit}
 .dsh-dui-canvas{position:relative;flex:1;min-height:0;overflow:hidden;padding-top:var(--dsh-frame-top-clearance,0px)}
@@ -572,6 +624,29 @@ export function createClientPlugin(require) {
 .dsh-dui-win:not([data-focused]) .dsh-dui-title{color:var(--dsw-alias-label-tertiary)}
 [data-dsh-desktop-ui-hover]{background:var(--dsw-alias-interactive-bg-hover)!important;box-shadow:inset 2px 0 0 var(--dsw-alias-label-secondary);transition:background .12s}
 .dsh-dui-settings{display:flex;flex-direction:column;gap:2px}
+.dsh-dui-section-title{margin:18px 0 4px;font-size:13px;line-height:20px;font-weight:600;color:var(--dsw-alias-label-secondary)}
+.dsh-dui-section-title:first-child{margin-top:0}
+.dsh-dui-appearance-grid{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:24px;align-items:start}
+@media (max-width:860px){.dsh-dui-appearance-grid{grid-template-columns:1fr}}
+.dsh-dui-setting.dsh-dui-setting-col{flex-direction:column;align-items:flex-start;gap:8px;text-align:left}
+.dsh-dui-range{flex:none;display:flex;align-items:center;gap:10px;width:220px}
+.dsh-dui-range input{flex:1;accent-color:var(--dsw-alias-label-primary)}
+.dsh-dui-range-value{flex:none;width:40px;text-align:right;font-size:13px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}
+.dsh-dui-wall-actions{display:flex;gap:8px;padding:4px 0 8px}
+.dsh-dui-btn-sm{height:30px;margin-top:0;font-size:13px}
+.dsh-dui-btn-quiet{border-color:transparent;background:none;color:var(--dsw-alias-label-secondary)}
+.dsh-dui-btn:disabled{opacity:.5;cursor:default}
+.dsh-dui-error{margin:0 0 8px;font-size:13px;color:var(--dsw-alias-state-error-primary)}
+.dsh-dui-segmented{display:inline-flex;align-self:flex-start;padding:2px;border-radius:var(--dsw-radius-md,10px);background:var(--dsw-alias-interactive-bg-hover)}
+.dsh-dui-segmented button{height:28px;padding:0 12px;border:0;border-radius:var(--dsw-radius-sm,8px);background:none;color:var(--dsw-alias-label-secondary);font:inherit;font-size:13px;cursor:pointer}
+.dsh-dui-segmented button[aria-checked=true]{background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);box-shadow:var(--dsw-elevation-soft,0 1px 3px rgba(0,0,0,.1))}
+.dsh-dui-preview-wrap{position:sticky;top:12px}
+.dsh-dui-preview{position:relative;isolation:isolate;height:170px;margin-top:6px;border-radius:var(--dsw-radius-md,10px);overflow:hidden;border:.5px solid var(--dsw-alias-border-l2);display:flex;flex-direction:column;background:repeating-conic-gradient(var(--dsw-alias-interactive-bg-hover) 0 25%,transparent 0 50%) 0 0/14px 14px}
+.dsh-dui-preview-canvas{position:relative;flex:1;background:color-mix(in srgb,var(--dsw-alias-bg-layer-1,#f4f4f5) calc(var(--dsh-dui-canvas-alpha,1) * 100%),transparent)}
+.dsh-dui-preview .dsh-dui-wallpaper{z-index:-1}
+.dsh-dui-preview-win{position:absolute;left:10%;top:14%;width:52%;height:62%;border-radius:6px;background:var(--dsw-alias-bg-base);border:.5px solid var(--dsw-alias-border-l2);box-shadow:var(--dsw-elevation-soft,0 2px 6px rgba(0,0,0,.12))}
+.dsh-dui-preview-win-2{left:44%;top:30%;width:46%;height:54%}
+.dsh-dui-preview-bar{flex:none;height:16px;border-top:.5px solid var(--dsw-alias-border-l2);background:color-mix(in srgb,var(--dsw-alias-bg-base) calc(var(--dsh-dui-taskbar-alpha,1) * 100%),transparent)}
 .dsh-dui-setting{display:flex;align-items:center;gap:16px;padding:12px 0;border-bottom:.5px solid var(--dsw-alias-border-l2)}
 .dsh-dui-setting:last-child{border-bottom:0}
 .dsh-dui-setting-text{flex:1;min-width:0}
@@ -624,15 +699,24 @@ export function createClientPlugin(require) {
 .dsh-dui-edge[data-edge=sw]{left:-3px;bottom:-3px;width:12px;height:12px;cursor:nesw-resize}
 .dsh-dui-snap{position:absolute;z-index:100000;border-radius:var(--dsw-radius-md,10px);background:var(--dsw-alias-interactive-bg-hover);border:1px solid var(--dsw-alias-border-l3);pointer-events:none;transition:all .12s ease}
 .dsh-dui-shield{position:fixed;inset:0;z-index:2147483646}
-.dsh-dui-taskbar{flex:none;user-select:none;display:flex;align-items:center;gap:4px;height:42px;padding:0 0 0 6px;border-top:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-base);position:relative;z-index:2}
+.dsh-dui-taskbar{flex:none;user-select:none;display:flex;align-items:center;gap:4px;height:42px;padding:0 0 0 6px;border-top:.5px solid var(--dsw-alias-border-l2);background:color-mix(in srgb,var(--dsw-alias-bg-base) calc(var(--dsh-dui-taskbar-alpha,1) * 100%),transparent);position:relative;z-index:2}
+[data-dsh-desktop-ui][data-transparent] .dsh-dui-taskbar,[data-dsh-desktop-ui][data-wallpaper] .dsh-dui-taskbar{backdrop-filter:blur(14px) saturate(1.2)}
 .dsh-dui-tasks{flex:1;min-width:0;display:flex;align-items:center;gap:4px;overflow-x:auto;scrollbar-width:none;padding:0 4px}
 .dsh-dui-tasks::-webkit-scrollbar{display:none}
 .dsh-dui-tb{position:relative;flex:none;display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 10px;border:0;border-radius:var(--dsw-radius-sm,8px);background:none;cursor:pointer;font-size:12px;line-height:16px;color:var(--dsw-alias-label-secondary)}
 .dsh-dui-tb:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .dsh-dui-tb[data-icon]{width:34px;padding:0;justify-content:center}
 .dsh-dui-task{max-width:200px;min-width:110px}
-.dsh-dui-task span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
 .dsh-dui-task[data-focused]{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dsh-dui-task-label{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dsh-dui-task-tip{position:absolute;bottom:calc(100% + 6px);transform:translateX(-50%);display:flex;align-items:center;max-width:min(440px,70vw);padding:6px 10px;border-radius:var(--dsw-radius-sm,8px);background:var(--dsw-alias-tooltip-bg,#222);color:var(--dsw-alias-label-primary-inverted,#fff);font-size:12px;line-height:16px;white-space:nowrap;pointer-events:none;z-index:5;box-shadow:var(--dsw-elevation-soft,0 4px 12px rgba(0,0,0,.18));animation:dsh-dui-tip .12s ease-out}
+@keyframes dsh-dui-tip{from{opacity:0;transform:translateX(-50%) translateY(3px)}}
+.dsh-dui-task-tip>*{overflow:hidden;text-overflow:ellipsis}
+.dsh-dui-task-tip-ws{flex:0 1 auto;max-width:50%;opacity:.72;font-weight:500}
+.dsh-dui-task-tip-sep{flex:none;margin:0 6px;opacity:.5}
+.dsh-dui-task-tip-session{flex:0 1 auto}
+.dsh-dui-task-tip-state{flex:none;margin-left:6px;opacity:.6}
 .dsh-dui-task::after{content:"";position:absolute;left:50%;bottom:3px;width:6px;height:3px;border-radius:2px;transform:translateX(-50%);background:var(--dsw-alias-label-tertiary);transition:width .15s}
 .dsh-dui-task[data-focused]::after{width:16px;background:var(--dsw-alias-label-primary)}
 .dsh-dui-sep{flex:none;width:1px;height:22px;background:var(--dsw-alias-border-l2);margin:0 4px}
@@ -1069,7 +1153,52 @@ export function createClientPlugin(require) {
     }, 'dsh-desktop-ui: sidebar hover');
     ctx.effect(() => store.subscribe(() => { if (store.get().hoverSidebar === false) { clearHighlight(); collapseAuto(); } }), 'dsh-desktop-ui: hover opt-out');
 
+    /* ---------- wallpaper image (browser-local, IndexedDB) ---------- */
+
+    // The image stays in this browser: it can be several MB, which does not
+    // belong in the profile's config file. Only its settings sync via the Host.
+    const wallpaperStore = (() => {
+      let url;
+      const listeners = new Set();
+      const emit = () => { for (const fn of [...listeners]) fn(); };
+      const open = () => new Promise((resolve, reject) => {
+        if (typeof indexedDB === 'undefined') { reject(new Error('IndexedDB unavailable')); return; }
+        const req = indexedDB.open(WALLPAPER_DB, 1);
+        req.onupgradeneeded = () => req.result.createObjectStore(WALLPAPER_STORE);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      const tx = async (mode, fn) => {
+        const db = await open();
+        try {
+          return await new Promise((resolve, reject) => {
+            const t = db.transaction(WALLPAPER_STORE, mode);
+            const r = fn(t.objectStore(WALLPAPER_STORE));
+            t.oncomplete = () => resolve(r?.result);
+            t.onerror = () => reject(t.error);
+          });
+        } finally { db.close(); }
+      };
+      const setBlob = blob => {
+        if (url) URL.revokeObjectURL(url);
+        url = blob ? URL.createObjectURL(blob) : undefined;
+        emit();
+      };
+      return {
+        url: () => url,
+        subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+        async load() { try { setBlob(await tx('readonly', st => st.get('current')) ?? undefined); } catch { setBlob(undefined); } },
+        async save(file) { await tx('readwrite', st => st.put(file, 'current')); setBlob(file); },
+        async clear() { try { await tx('readwrite', st => st.delete('current')); } catch { /* ignore */ } setBlob(undefined); },
+        dispose() { if (url) URL.revokeObjectURL(url); url = undefined; },
+      };
+    })();
+    if (popoutSelf === undefined) wallpaperStore.load();
+    ctx.effect(() => () => wallpaperStore.dispose(), 'dsh-desktop-ui: wallpaper');
+    const useWallpaperUrl = () => useSyncExternalStore(wallpaperStore.subscribe, wallpaperStore.url, wallpaperStore.url);
+
     const actions = {
+      setAppearance: patch => update(s => ({ ...s, appearance: sanitizeAppearance({ ...s.appearance, ...patch }) })),
       hover: (id, leaving) => { if (id === undefined && leaving !== undefined && hoverId !== leaving) return; onWindowHover(id); },
       unhoverIf: id => { if (hoverId === id) onWindowHover(undefined); },
       setHoverSidebar: on => update(s => ({ ...s, hoverSidebar: on === true })),
@@ -1352,6 +1481,42 @@ export function createClientPlugin(require) {
         h('div', null, now.toLocaleDateString([], { day: 'numeric', month: 'short' })));
     }
 
+    // One shared taskbar tooltip, rendered above the taskbar so the scrolling
+    // task strip cannot clip it.
+    let taskTip = null;
+    const taskTipListeners = new Set();
+    let taskTipTimer;
+    function showTaskTip(el, info) {
+      clearTimeout(taskTipTimer);
+      const apply = next => { taskTip = next; for (const fn of [...taskTipListeners]) fn(); };
+      if (!el) { apply(null); return; }
+      taskTipTimer = setTimeout(() => {
+        const r = el.getBoundingClientRect();
+        const bar = el.closest('.dsh-dui-taskbar')?.getBoundingClientRect();
+        if (!bar) return;
+        apply({ ...info, x: r.left + r.width / 2 - bar.left, barWidth: bar.width });
+      }, 350);
+    }
+    ctx.effect(() => () => clearTimeout(taskTipTimer), 'dsh-desktop-ui: task tooltip');
+    const useTaskTip = () => useSyncExternalStore(fn => { taskTipListeners.add(fn); return () => taskTipListeners.delete(fn); }, () => taskTip, () => taskTip);
+    function TaskTooltip() {
+      const tip = useTaskTip();
+      const ref = useRef(null);
+      const [shift, setShift] = useState(0);
+      React.useLayoutEffect(() => {
+        if (!tip || !ref.current) { setShift(0); return; }
+        const w = ref.current.offsetWidth;
+        const left = tip.x - w / 2;
+        setShift(left < 6 ? 6 - left : left + w > tip.barWidth - 6 ? tip.barWidth - 6 - (left + w) : 0);
+      }, [tip]);
+      if (!tip) return null;
+      return h('div', { ref, className: 'dsh-dui-task-tip', role: 'tooltip', 'data-dsh-desktop-ui-task-tip': '', style: { left: `${tip.x + shift}px` } },
+        tip.workspace ? h('span', { className: 'dsh-dui-task-tip-ws' }, tip.workspace) : null,
+        tip.workspace ? h('span', { className: 'dsh-dui-task-tip-sep', 'aria-hidden': 'true' }, '|') : null,
+        h('span', { className: 'dsh-dui-task-tip-session' }, tip.session),
+        tip.state ? h('span', { className: 'dsh-dui-task-tip-state' }, tip.state) : null);
+    }
+
     function TaskButton({ win, focused, useSessions, useSessionStatus, useWorkspaces }) {
       const sessionName = useSessions(state => sessionTitle(state.byId[win.sessionId], win.sessionId));
       const workspace = useWorkspaces ? useWorkspaces(state => workspaceNameFor(state.items, win.sessionId)) : undefined;
@@ -1363,12 +1528,17 @@ export function createClientPlugin(require) {
         'data-focused': focused ? '' : undefined,
         'aria-pressed': focused,
         'data-session-id': win.sessionId,
-        title: `${title}${win.poppedOut ? ' (popped out)' : win.minimized ? ' (minimized)' : ''}`,
+        'aria-label': `${title}${win.poppedOut ? ' (popped out)' : win.minimized ? ' (minimized)' : ''}`,
+        onPointerEnter: e => showTaskTip(e.currentTarget, { workspace, session: sessionName, state: win.poppedOut ? 'popped out' : win.minimized ? 'minimized' : '' }),
+        onPointerLeave: () => showTaskTip(null),
+        onFocus: e => showTaskTip(e.currentTarget, { workspace, session: sessionName, state: win.poppedOut ? 'popped out' : win.minimized ? 'minimized' : '' }),
+        onBlur: () => showTaskTip(null),
         onClick: () => (win.poppedOut ? actions.popOut(win.sessionId) : actions.taskClick(win.sessionId)),
       },
       h('span', { className: 'dsh-dui-dot', 'data-running': running ? '' : undefined }),
-      h('span', null, sessionName),
-      win.poppedOut ? h('span', { className: 'dsh-dui-task-pop', title: 'Popped out', 'aria-label': 'popped out' }, I.popout(12)) : null);
+      h('span', { className: 'dsh-dui-task-label' }, sessionName),
+      win.poppedOut ? h('span', { className: 'dsh-dui-task-pop', title: 'Popped out', 'aria-label': 'popped out' }, I.popout(12)) : null,
+      );
     }
 
     function Desktop({ renderSlot, SessionProvider, useSessions, useSessionStatus, useWorkspaces }) {
@@ -1402,7 +1572,16 @@ export function createClientPlugin(require) {
             : { right: GAP, top: GAP, width: `calc(50% - ${GAP * 1.5}px)`, bottom: GAP };
       const visible = windows.filter(w => !w.minimized).length;
 
-      return h('div', { 'data-dsh-desktop-ui': '', 'data-narrow': narrow ? '' : undefined, style: { '--dsh-dui-zoom': String(zoom) } },
+      const appearance = useDesktop(s => s.appearance);
+      const wallUrl = useWallpaperUrl();
+      const showWall = appearance.wallpaper && !!wallUrl;
+      return h('div', {
+        'data-dsh-desktop-ui': '', 'data-narrow': narrow ? '' : undefined,
+        'data-transparent': appearance.canvasOpacity < 100 ? '' : undefined,
+        'data-wallpaper': showWall ? '' : undefined,
+        style: { '--dsh-dui-zoom': String(zoom), ...appearanceStyle(appearance) },
+      },
+        showWall ? h('div', { className: 'dsh-dui-wallpaper', 'aria-hidden': 'true', style: { backgroundImage: `url("${wallUrl}")` } }) : null,
         h('div', { className: 'dsh-dui-canvas' },
           h('div', { className: 'dsh-dui-canvas-inner', ref: canvasRef },
             windows.length === 0 ? h('div', { className: 'dsh-dui-empty' },
@@ -1420,6 +1599,7 @@ export function createClientPlugin(require) {
             })),
             snapStyle ? h('div', { className: 'dsh-dui-snap', style: snapStyle }) : null)),
         h('nav', { className: 'dsh-dui-taskbar', 'aria-label': 'Taskbar' },
+          h(TaskTooltip),
           h('button', { type: 'button', className: 'dsh-dui-tb', 'data-icon': '', title: 'New session', 'aria-label': 'New session', onClick: actions.newSession }, I.plus(18)),
           h('div', { className: 'dsh-dui-sep' }),
           h('div', { className: 'dsh-dui-tasks', role: 'toolbar', 'aria-label': 'Open windows' },
@@ -1475,10 +1655,73 @@ export function createClientPlugin(require) {
 
     /* Desktop mode settings: Plugins → dsh-desktop-ui (the plugin manager's
        documented `plugins.bundle.config` seat, keyed by our package name). */
+    function Slider({ id, label, desc, value, onChange, min = 0, max = 100, suffix = '%' }) {
+      return h('div', { className: 'dsh-dui-setting' },
+        h('div', { className: 'dsh-dui-setting-text' },
+          h('label', { className: 'dsh-dui-setting-title', htmlFor: id }, label),
+          desc ? h('p', { className: 'dsh-dui-setting-desc' }, desc) : null),
+        h('div', { className: 'dsh-dui-range' },
+          h('input', { id, type: 'range', min, max, step: 5, value, 'data-dsh-desktop-ui-range': id, onChange: e => onChange(Number(e.target.value)) }),
+          h('output', { htmlFor: id, className: 'dsh-dui-range-value' }, `${value}${suffix}`)));
+    }
+
+    function AppearanceEditor() {
+      const a = useDesktop(s => s.appearance);
+      const wallUrl = useWallpaperUrl();
+      const [error, setError] = useState('');
+      const [busy, setBusy] = useState(false);
+      const fileRef = useRef(null);
+      const pick = async file => {
+        const problem = checkWallpaperFile(file);
+        if (problem) { setError(problem); return; }
+        setError(''); setBusy(true);
+        try {
+          await wallpaperStore.save(file);
+          actions.setAppearance({ wallpaper: true, wallpaperName: file.name });
+        } catch (e) {
+          setError(`Could not save the image in this browser: ${e?.message ?? e}`);
+        } finally { setBusy(false); }
+      };
+      const fits = [['cover', 'Fill'], ['contain', 'Fit'], ['center', 'Center'], ['tile', 'Tile']];
+      const preview = h('div', { className: 'dsh-dui-preview', 'aria-hidden': 'true', style: appearanceStyle(a) },
+        wallUrl && a.wallpaper ? h('div', { className: 'dsh-dui-wallpaper', style: { backgroundImage: `url("${wallUrl}")` } }) : null,
+        h('div', { className: 'dsh-dui-preview-canvas' },
+          h('div', { className: 'dsh-dui-preview-win' }), h('div', { className: 'dsh-dui-preview-win dsh-dui-preview-win-2' })),
+        h('div', { className: 'dsh-dui-preview-bar' }));
+      return h('div', { className: 'dsh-dui-appearance', 'data-dsh-desktop-ui-appearance': '' },
+        h('h3', { className: 'dsh-dui-section-title' }, 'Desktop background'),
+        h('div', { className: 'dsh-dui-appearance-grid' },
+          h('div', { className: 'dsh-dui-appearance-controls' },
+            h(Slider, { id: 'dsh-dui-canvas-opacity', label: 'Canvas opacity', desc: 'Lower it to see the wallpaper (or what is behind DSH) through the desktop. Windows stay solid.', value: a.canvasOpacity, onChange: v => actions.setAppearance({ canvasOpacity: v }) }),
+            h(Slider, { id: 'dsh-dui-taskbar-opacity', label: 'Taskbar opacity', desc: 'Below 100% the taskbar becomes frosted glass.', value: a.taskbarOpacity, onChange: v => actions.setAppearance({ taskbarOpacity: v }) }),
+            h('div', { className: 'dsh-dui-setting' },
+              h('div', { className: 'dsh-dui-setting-text' },
+                h('p', { className: 'dsh-dui-setting-title', id: 'dsh-dui-wall-label' }, 'Wallpaper'),
+                h('p', { className: 'dsh-dui-setting-desc' }, wallUrl ? (a.wallpaperName || 'Custom image') + ' · stored in this browser' : 'PNG, WebP, GIF, JPEG, AVIF or SVG, up to 12 MB. Transparent areas show the canvas colour.')),
+              h('button', { type: 'button', role: 'switch', className: 'dsh-dui-switch-btn', 'aria-checked': a.wallpaper && !!wallUrl, disabled: !wallUrl, 'aria-labelledby': 'dsh-dui-wall-label', 'data-dsh-desktop-ui-wall-toggle': '', onClick: () => actions.setAppearance({ wallpaper: !a.wallpaper }) },
+                h('span', { className: 'dsh-dui-switch', 'aria-hidden': 'true' }))),
+            h('div', { className: 'dsh-dui-wall-actions' },
+              h('input', { ref: fileRef, type: 'file', accept: WALLPAPER_TYPES.join(','), hidden: true, 'data-dsh-desktop-ui-wall-file': '', onChange: e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) pick(f); } }),
+              h('button', { type: 'button', className: 'dsh-dui-btn dsh-dui-btn-sm', disabled: busy, onClick: () => fileRef.current?.click() }, busy ? 'Saving…' : wallUrl ? 'Change image…' : 'Choose image…'),
+              wallUrl ? h('button', { type: 'button', className: 'dsh-dui-btn dsh-dui-btn-sm dsh-dui-btn-quiet', 'data-dsh-desktop-ui-wall-remove': '', onClick: async () => { await wallpaperStore.clear(); actions.setAppearance({ wallpaper: false, wallpaperName: '' }); } }, 'Remove') : null),
+            error ? h('p', { className: 'dsh-dui-error', role: 'alert' }, error) : null,
+            wallUrl ? h('div', { className: 'dsh-dui-setting dsh-dui-setting-col' },
+              h('p', { className: 'dsh-dui-setting-title' }, 'Wallpaper layout'),
+              h('div', { className: 'dsh-dui-segmented', role: 'radiogroup', 'aria-label': 'Wallpaper layout' },
+                fits.map(([value, text]) => h('button', { key: value, type: 'button', role: 'radio', 'aria-checked': a.wallpaperFit === value, 'data-fit': value, onClick: () => actions.setAppearance({ wallpaperFit: value }) }, text)))) : null,
+            wallUrl ? h(Slider, { id: 'dsh-dui-wall-opacity', label: 'Wallpaper strength', value: a.wallpaperOpacity, onChange: v => actions.setAppearance({ wallpaperOpacity: v }) }) : null,
+            h('div', { className: 'dsh-dui-wall-actions' },
+              h('button', { type: 'button', className: 'dsh-dui-btn dsh-dui-btn-sm dsh-dui-btn-quiet', 'data-dsh-desktop-ui-appearance-reset': '', onClick: () => actions.setAppearance({ canvasOpacity: 100, taskbarOpacity: 100, wallpaperFit: 'cover', wallpaperOpacity: 100 }) }, 'Reset appearance'))),
+          h('div', { className: 'dsh-dui-preview-wrap' }, h('p', { className: 'dsh-dui-setting-desc' }, 'Preview'), preview)));
+    }
+
     function DesktopSettings({ view }) {
       const hover = useDesktop(s => s.hoverSidebar !== false);
-      if (view === 'summary') return h('span', null, hover ? 'Sidebar hover highlight on' : 'Sidebar hover highlight off');
+      const a = useDesktop(s => s.appearance);
+      if (view === 'summary') return h('span', null, [hover ? 'Sidebar hover on' : 'Sidebar hover off', a.wallpaper ? 'wallpaper' : null, a.canvasOpacity < 100 ? `canvas ${a.canvasOpacity}%` : null].filter(Boolean).join(' · '));
       return h('div', { className: 'dsh-dui-settings', 'data-dsh-desktop-ui-settings': '' },
+        h(AppearanceEditor),
+        h('h3', { className: 'dsh-dui-section-title' }, 'Sidebar'),
         h('div', { className: 'dsh-dui-setting' },
           h('div', { className: 'dsh-dui-setting-text' },
             h('p', { className: 'dsh-dui-setting-title', id: 'dsh-dui-hover-label' }, 'Highlight the sidebar on hover'),
@@ -1508,7 +1751,7 @@ export function createClientPlugin(require) {
     apply,
     // Pure helpers for tests.
     sanitize, serialize, parseLayout, createStore, createHostSync, findEntryNamespace, uniqueWindows, openWindow, closeWindow, focusWindow, minimizeWindow, toggleMaximize,
-    setGeometry, snapWindow, snapGeometry, arrange, dragRect, arrangeGeometry, workspaceNameFor, windowLabel, linkedNeighbours, moveSharedEdge, toggleShowDesktop, cycleZoom, isBrowserRuntime, popoutTarget, popoutUrl, setPopped, pruneMissing, focusedId, emptyState,
+    setGeometry, snapWindow, snapGeometry, arrange, dragRect, arrangeGeometry, workspaceNameFor, windowLabel, sanitizeAppearance, appearanceStyle, checkWallpaperFile, linkedNeighbours, moveSharedEdge, toggleShowDesktop, cycleZoom, isBrowserRuntime, popoutTarget, popoutUrl, setPopped, pruneMissing, focusedId, emptyState,
     constants: { PANEL, WINDOW_SLOT, TOGGLE_ID, TOGGLE_ORDER, STORAGE_KEY, MAX_WINDOWS, ZOOM_STEPS, DEFAULT_ZOOM },
   };
 }

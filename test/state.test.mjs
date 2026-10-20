@@ -489,3 +489,42 @@ test('sidebar hover highlight is on by default and its opt-out persists', () => 
   const off = P.sanitize(JSON.parse(P.serialize({ ...P.emptyState(), hoverSidebar: false })));
   assert.equal(off.hoverSidebar, false);
 });
+
+test('appearance defaults to the normal solid desktop and sanitises stored values', () => {
+  assert.deepEqual(P.emptyState().appearance, { canvasOpacity: 100, wallpaper: false, wallpaperFit: 'cover', wallpaperOpacity: 100, wallpaperName: '', taskbarOpacity: 100 });
+  const a = P.sanitizeAppearance({ canvasOpacity: -20, taskbarOpacity: 140, wallpaper: 'yes', wallpaperFit: 'stretch', wallpaperOpacity: 37.4, wallpaperName: 'x'.repeat(500) });
+  assert.equal(a.canvasOpacity, 0);
+  assert.equal(a.taskbarOpacity, 100);
+  assert.equal(a.wallpaper, false);
+  assert.equal(a.wallpaperFit, 'cover');
+  assert.equal(a.wallpaperOpacity, 37);
+  assert.equal(a.wallpaperName.length, 120);
+  assert.deepEqual(P.sanitizeAppearance(null), P.emptyState().appearance);
+});
+
+test('appearance persists with the layout', () => {
+  const s = { ...P.emptyState(), appearance: P.sanitizeAppearance({ canvasOpacity: 40, wallpaper: true, wallpaperFit: 'tile', wallpaperName: 'grid.png' }) };
+  const back = P.sanitize(JSON.parse(P.serialize(s))).appearance;
+  assert.equal(back.canvasOpacity, 40);
+  assert.equal(back.wallpaper, true);
+  assert.equal(back.wallpaperFit, 'tile');
+  assert.equal(back.wallpaperName, 'grid.png');
+});
+
+test('appearance becomes CSS variables', () => {
+  const v = P.appearanceStyle(P.sanitizeAppearance({ canvasOpacity: 25, taskbarOpacity: 60, wallpaperOpacity: 80, wallpaperFit: 'tile' }));
+  assert.equal(v['--dsh-dui-canvas-alpha'], '0.25');
+  assert.equal(v['--dsh-dui-taskbar-alpha'], '0.6');
+  assert.equal(v['--dsh-dui-wall-alpha'], '0.8');
+  assert.equal(v['--dsh-dui-wall-repeat'], 'repeat');
+  assert.equal(P.appearanceStyle(P.sanitizeAppearance({ wallpaperFit: 'cover' }))['--dsh-dui-wall-size'], 'cover');
+});
+
+test('wallpaper files are validated before storing', () => {
+  assert.equal(P.checkWallpaperFile({ type: 'image/png', size: 2048 }), undefined);
+  assert.equal(P.checkWallpaperFile({ type: 'image/svg+xml', size: 900 }), undefined);
+  assert.match(P.checkWallpaperFile({ type: 'text/html', size: 10 }), /PNG/);
+  assert.match(P.checkWallpaperFile({ type: 'image/png', size: 0 }), /empty/);
+  assert.match(P.checkWallpaperFile({ type: 'image/png', size: 13 * 1024 * 1024 }), /12 MB/);
+  assert.match(P.checkWallpaperFile(null), /No file/);
+});

@@ -49,6 +49,8 @@ browser-local window layout remains in `localStorage`.
 | **Sessions as windows** | Clicking a session in the sidebar opens it as a window. A session can only have one window — clicking it again restores and focuses the existing one. Every window shows the **same conversation UI as the main chat** — header, view tabs, transcript, composer, and anything other plugins add (for example `dsh-rewind-plugin`'s rewind button under your messages). |
 | **Window titles** | Every title bar reads `workspace | session` (for example `acme-web | Fix flaky checkout test`), with the workspace name in a quieter colour. Ungrouped sessions show just the session title. The full label is also the window's tooltip and accessible name. |
 | **Find it in the sidebar** | Hovering a window highlights its session and its workspace in the sidebar. If that workspace is collapsed, it opens while you hover and closes again when you move away (unless you clicked in the sidebar meanwhile). Turn this off in **Plugins → dsh-desktop-ui → Highlight the sidebar on hover**; the choice is saved with the layout. |
+| **Taskbar tooltips** | Hovering (or keyboard-focusing) a taskbar button shows `workspace | session`, plus "minimized" or "popped out" when it applies. |
+| **Wallpaper and transparency** | **Plugins → dsh-desktop-ui → Desktop background** has a live preview and lets you set **Canvas opacity** (down to fully transparent; windows stay solid), **Taskbar opacity** (frosted glass below 100%), and a **wallpaper** image (PNG, WebP, GIF, JPEG, AVIF or SVG, up to 12 MB) with Fill / Fit / Center / Tile and a strength slider. Transparent pixels in the image show the canvas colour through. The image is stored in this browser (IndexedDB); the settings are saved with the layout. **Reset appearance** restores the defaults. |
 | **Window controls** | Drag the title bar to move; drag any edge or corner to resize; double-click the title to maximize/restore; minimize, maximize and close buttons. |
 | **Pop out (browser only)** | The ↗ button left of minimize opens that session in its own browser window, showing just that conversation (no sidebar). The desktop keeps a placeholder with **Pop back in**; the popout window has a **Pop back in** button in its header too. Either one closes the popout and returns the session to the canvas. Closing the popout window yourself also brings it back. The button is hidden in the DeepSeek desktop app, which is detected through the `data-platform` marker its preload sets on `<html>` (the same signal DSH's shortcut layer uses). |
 | **Linked borders** | When windows sit side by side or stacked (for example after Tile or Side by side, or a left/right snap), dragging the border between them resizes all of them at once: as one grows, its neighbour shrinks, and the gap stays the same. In a grid the whole straight split moves together. It stops at each window's minimum size. Corner grips and windows that don't touch still resize on their own. |
@@ -59,6 +61,8 @@ browser-local window layout remains in `localStorage`.
 | **Plays well with sidebar plugins** | The Desktop mode switch is always the top entry above Settings; other footer buttons (for example `dsh-all-usage`) stack underneath it instead of being pushed sideways. |
 | **Light and dark** | Uses DSH's own theme tokens only, so it follows the GUI theme automatically. |
 | **Narrow screens** | Below 720px the focused window fills the canvas and you switch through the taskbar. |
+
+The wallpaper image itself never leaves the browser: it is kept in IndexedDB (database `dsh-desktop-ui`), not in the profile config, so it is not synced to other browsers. Only its settings (on/off, layout, strength, file name) are.
 
 Closing a window never deletes or archives a session. The layout is stored as one
 small JSON value in this plugin's own config entry (`dsh-desktop-ui` → `layout` in
@@ -122,7 +126,7 @@ npm pack
 - `cordis.patch.yml` registers the package.
 - `index.mjs` declares the volatile `layout` Config field using the running harness's own schemastery; it has no other host behaviour.
 - Client inject list: `dsh-api-session-controller`, `dsh-client-ui-layout`, `dsh-client-ui-session`, `dsh-client-ui-sidebar`, `dsh-client-ui-conversation`, `dsh-client-ui-chat`, `dsh-client-ui-workspace`, `dsh-client-ui-settings`.
-- `test/state.test.mjs` covers the window manager (open/focus/minimize/maximize/close, one window per session, move never resizes, snapping, linked borders, layouts, show desktop, pruning, state sanitising, text size), Host persistence (restore, seeding, debounced and serialized writes, malformed values, early local changes), popout detection and URLs, footer ordering, runtime identities, and bundle freshness.
+- `test/state.test.mjs` covers the window manager (open/focus/minimize/maximize/close, one window per session, move never resizes, snapping, linked borders, appearance and wallpaper validation, layouts, show desktop, pruning, state sanitising, text size), Host persistence (restore, seeding, debounced and serialized writes, malformed values, early local changes), popout detection and URLs, footer ordering, runtime identities, and bundle freshness.
 - `scripts/e2e-gui.mjs` is a dependency-free headless Chrome/CDP test against a real, isolated DSH instance. See [LOCAL-SETUP.md](./LOCAL-SETUP.md).
 
 ## Design concepts
